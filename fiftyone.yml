@@ -1,0 +1,14 @@
+name: "@segmentsai/segmentsai"
+description: Utilities for integrating FiftyOne with segments.ai
+version: 0.1.0
+fiftyone:
+  version: ">=0.22"
+url: ""
+license: "TODO"
+operators:
+  - request_annotations
+  - fetch_annotations
+secrets:
+ - SEGMENTS_API_KEY
+ - SEGMENTS_URL
+
