@@ -6,6 +6,8 @@ Annotation operators.
 |
 """
 
+import enum
+import urllib.parse
 from pathlib import Path
 
 import fiftyone as fo
@@ -13,6 +15,14 @@ import fiftyone.operators as foo
 import fiftyone.operators.types as types
 import numpy as np
 from segments import SegmentsClient, SegmentsDataset
+
+SEGMENTS_FRONTEND_URL = "https://segments.ai"
+
+
+class TargetSelection(enum.Enum):
+    DATASET = "full_dataset"
+    SELECTED = "selected"
+    CURRENT_VIEW = "current_view"
 
 
 class RequestAnnotations(foo.Operator):
@@ -39,10 +49,55 @@ class RequestAnnotations(foo.Operator):
             task_attributes=attributes,
         )
 
-        upload_dataset(client, ctx.dataset, dataset.full_name)
+        dataset_view = self.target_dataset_view(ctx)
+        url = urllib.parse.urljoin(SEGMENTS_FRONTEND_URL, dataset.full_name)
+        upload_dataset(client, dataset_view, dataset.full_name, ctx)
+
+        return {"segments_dataset": dataset.full_name, "url": url}
+
+    def target_dataset_view(self, ctx):
+        target = TargetSelection(ctx.params["target"])
+        if target == TargetSelection.DATASET:
+            return ctx.dataset
+        elif target == TargetSelection.SELECTED:
+            return ctx.view.select(ctx.selected)
+        elif target == TargetSelection.CURRENT_VIEW:
+            return ctx.view
+        else:
+            raise ValueError(f"Could not get target for {target=}")
 
     def resolve_input(self, ctx):
         inputs = types.Object()
+
+        has_selected = bool(ctx.selected)
+        has_view = ctx.view != ctx.dataset.view()
+        target_choices = types.RadioGroup(orientation="horizontal")
+        target_choices.add_choice(
+            TargetSelection.DATASET.value,
+            label="Entire dataset",
+            description="Upload the entire dataset",
+        )
+        if has_selected:
+            target_choices.add_choice(
+                TargetSelection.SELECTED.value,
+                label="Selected samples",
+                description="Upload only the selected samples.",
+            )
+        if has_view:
+            target_choices.add_choice(
+                TargetSelection.CURRENT_VIEW.value,
+                label="Current view",
+                description="Upload only the current view",
+            )
+
+        inputs.enum(
+            "target",
+            target_choices.values(),
+            required=True,
+            label="Target",
+            view=target_choices,
+            default="full_dataset",
+        )
 
         inputs.str("dataset_name", label="Dataset Name")
 
@@ -56,9 +111,9 @@ class RequestAnnotations(foo.Operator):
         return types.Property(inputs)
 
     def resolve_output(self, ctx):
-        # TODO: Add link to new dataset on segments.ai
         outputs = types.Object()
         view = types.View(label="New dataset created")
+        outputs.str("url", label="Dataset URL")
         return types.Property(outputs, view=view)
 
 
@@ -118,6 +173,7 @@ class FetchAnnotations(foo.Operator):
             image_info["url"] = image_info["url"].replace("https", "s3")
 
         fn_sample_map = {Path(s.filepath).name: s for s in ctx.dataset}
+        annotation_count = 0
         for annotation in dataloader:
             if annotation["segmentation_bitmap"] is None:
                 # No annotation, skip
@@ -129,19 +185,32 @@ class FetchAnnotations(foo.Operator):
             label = fo.Segmentation(mask=segmap)
             sample.add_labels(label, label_field="ground_truth")
             sample.save()
+            annotation_count += 1
 
         ctx.ops.reload_dataset()
+        return {"count": annotation_count}
+
+    def resolve_output(self, ctx):
+        outputs = types.Object()
+        view = types.View(label="Pulled annotations")
+        outputs.str("count", label="Amount of pulled annotations")
+        return types.Property(outputs, view=view)
 
 
 def get_client(ctx) -> SegmentsClient:
-    client = SegmentsClient(
-        ctx.secrets.get("SEGMENTS_API_KEY"), api_url=ctx.secrets.get("SEGMENTS_URL")
-    )
+    api_key = ctx.secrets.get("SEGMENTS_API_KEY")
+    if (segments_url := ctx.secrets.get("SEGMENTS_URL", None)) is not None:
+        client = SegmentsClient(api_key, api_url=segments_url)
+    else:
+        client = SegmentsClient(api_key)
     return client
 
 
-def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str):
-    for s in dataset:
+def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str, ctx):
+    for idx, s in enumerate(dataset):
+        ctx.set_progress(
+            (idx + 1) / len(dataset), label=f"Uploading {idx+1}/(len(dataset))"
+        )
         with open(s.filepath, "rb") as f:
             asset = client.upload_asset(f, Path(s.filepath).name)
             sample_attrib = {"image": {"url": asset.url}}
