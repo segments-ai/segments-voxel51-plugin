@@ -25,6 +25,17 @@ class TargetSelection(enum.Enum):
     CURRENT_VIEW = "current_view"
 
 
+class SegmentsDatasetType(enum.Enum):
+    SEGMENTATION_BITMAP = "segmentation-bitmap"
+    SEGMENTATION_BITMAP_HIGHRES = "segmentation-bitmap-highres"
+    BBOXES = "bboxes"
+    VECTOR = "vector"
+    KEYPOINTS = "keypoints"
+    # Disabling sequences for now, how would that interface work?
+    # IMAGE_SEGMENTATION_SEQUENCE = "image-segmentation-sequence"
+    # IMAGE_VECTOR_SEQUENCE = "image-vector-sequence"
+
+
 class RequestAnnotations(foo.Operator):
     @property
     def config(self):
@@ -36,16 +47,70 @@ class RequestAnnotations(foo.Operator):
             dynamic=False,
         )
 
+    @staticmethod
+    def target_data_selector(ctx, inputs):
+        has_selected = bool(ctx.selected)
+        has_view = ctx.view != ctx.dataset.view()
+        target_choices = types.RadioGroup(orientation="horizontal")
+        target_choices.add_choice(
+            TargetSelection.DATASET.value,
+            label="Entire dataset",
+            description="Upload the entire dataset",
+        )
+        if has_selected:
+            target_choices.add_choice(
+                TargetSelection.SELECTED.value,
+                label="Selected samples",
+                description="Upload only the selected samples.",
+            )
+        if has_view:
+            target_choices.add_choice(
+                TargetSelection.CURRENT_VIEW.value,
+                label="Current view",
+                description="Upload only the current view",
+            )
+        inputs.enum(
+            "target",
+            target_choices.values(),
+            required=True,
+            label="Target",
+            view=target_choices,
+            default="full_dataset",
+        )
+
+    @staticmethod
+    def dataset_type_selector(ctx, inputs):
+        labelmap = {
+            SegmentsDatasetType.SEGMENTATION_BITMAP: "Segmentation bitmap",
+            SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES: "Segmentation bitmap highres",
+            SegmentsDatasetType.BBOXES: "Bounding boxes",
+            SegmentsDatasetType.VECTOR: "Vector",
+            SegmentsDatasetType.KEYPOINTS: "Keypoints",
+        }
+        data_choices = types.Dropdown()
+        for datatype in SegmentsDatasetType:
+            data_choices.add_choice(datatype.value, label=labelmap[datatype])
+
+        inputs.enum(
+            "dataset_type",
+            data_choices.values(),
+            label="Dataset type",
+            default=SegmentsDatasetType.SEGMENTATION_BITMAP.value,
+            view=data_choices,
+        )
+
     def execute(self, ctx):
         attributes = {"format_version": "0.1", "categories": []}
         for idx, cls in enumerate(ctx.params["classes"]):
             attributes["categories"].append({"id": idx + 1, "name": cls})
 
+        task_type = ctx.params["dataset_type"]
+
         client = get_client(ctx)
         dataset = client.add_dataset(
             ctx.params["dataset_name"],
             description="Created by the segments fiftyone plugin.",
-            task_type="segmentation-bitmap",
+            task_type=task_type,
             task_attributes=attributes,
         )
 
@@ -69,37 +134,9 @@ class RequestAnnotations(foo.Operator):
     def resolve_input(self, ctx):
         inputs = types.Object()
 
-        has_selected = bool(ctx.selected)
-        has_view = ctx.view != ctx.dataset.view()
-        target_choices = types.RadioGroup(orientation="horizontal")
-        target_choices.add_choice(
-            TargetSelection.DATASET.value,
-            label="Entire dataset",
-            description="Upload the entire dataset",
-        )
-        if has_selected:
-            target_choices.add_choice(
-                TargetSelection.SELECTED.value,
-                label="Selected samples",
-                description="Upload only the selected samples.",
-            )
-        if has_view:
-            target_choices.add_choice(
-                TargetSelection.CURRENT_VIEW.value,
-                label="Current view",
-                description="Upload only the current view",
-            )
-
-        inputs.enum(
-            "target",
-            target_choices.values(),
-            required=True,
-            label="Target",
-            view=target_choices,
-            default="full_dataset",
-        )
-
+        self.target_data_selector(ctx, inputs)
         inputs.str("dataset_name", label="Dataset Name")
+        self.dataset_type_selector(ctx, inputs)
 
         inputs.list(
             "classes",
@@ -173,28 +210,48 @@ class FetchAnnotations(foo.Operator):
             image_info["url"] = image_info["url"].replace("https", "s3")
 
         fn_sample_map = {Path(s.filepath).name: s for s in ctx.dataset}
-        annotation_count = 0
-        for annotation in dataloader:
-            if annotation["segmentation_bitmap"] is None:
-                # No annotation, skip
-                continue
-
-            name = annotation["name"]
-            sample = fn_sample_map[name]
-            segmap = np.asarray(annotation["segmentation_bitmap"])
-            label = fo.Segmentation(mask=segmap)
-            sample.add_labels(label, label_field="ground_truth")
-            sample.save()
-            annotation_count += 1
+        dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
+        if dataset_type in (
+            SegmentsDatasetType.SEGMENTATION_BITMAP,
+            SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES,
+        ):
+            insert_segmentation_labels(dataloader, ctx.dataset, fn_sample_map)
+        else:
+            raise ValueError(f"Dataset type '{dataset_type.value}' not yet supported")
 
         ctx.ops.reload_dataset()
-        return {"count": annotation_count}
 
     def resolve_output(self, ctx):
         outputs = types.Object()
-        view = types.View(label="Pulled annotations")
-        outputs.str("count", label="Amount of pulled annotations")
+        view = types.View(label="Succesfully pulled annotations")
         return types.Property(outputs, view=view)
+
+
+def insert_segmentation_labels(
+    dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
+):
+    catmap = {x.id: x.name for x in dataloader.categories}
+    dataset.mask_targets["ground_truth"] = catmap
+    dataset.save()
+    annotation_count = 0
+    for annotation in dataloader:
+        if annotation["segmentation_bitmap"] is None:
+            # No annotation, skip
+            continue
+
+        name = annotation["name"]
+        sample = sample_map[name]
+        segmap_instance = np.asarray(annotation["segmentation_bitmap"])
+        id_id_map = {x["id"]: x["category_id"] for x in annotation["annotations"]}
+        if 0 not in id_id_map:
+            id_id_map[0] = 0
+        id_id_func = np.vectorize(lambda x: id_id_map[x])
+        segmap = id_id_func(segmap_instance)
+
+        label = fo.Segmentation(mask=segmap)
+        sample.add_labels(label, label_field="ground_truth")
+        sample.save()
+        annotation_count += 1
 
 
 def get_client(ctx) -> SegmentsClient:
