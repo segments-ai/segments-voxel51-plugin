@@ -31,9 +31,9 @@ class RequestAnnotations(foo.Operator):
     def config(self):
         return foo.OperatorConfig(
             name="request_annotations",
-            label="Request annotations",
-            # light_icon="/assets/icon-light.svg",
-            # dark_icon="/assets/icon-dark.svg",
+            label="Request Segments.ai annotations",
+            light_icon="/assets/Black icon.svg",
+            dark_icon="/assets/White icon.svg",
             dynamic=False,
         )
 
@@ -78,6 +78,8 @@ class FetchAnnotations(foo.Operator):
     def config(self):
         return foo.OperatorConfig(
             name="fetch_annotations",
+            light_icon="/assets/Black icon.svg",
+            dark_icon="/assets/White icon.svg",
             label="Fetch Segments.ai annotations",
             dynamic=True,
         )
