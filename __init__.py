@@ -6,23 +6,12 @@ Annotation operators.
 |
 """
 
-import contextlib
-import json
 from pathlib import Path
-import threading
-
-from bson import json_util
 
 import fiftyone as fo
-import fiftyone.core.utils as fou
 import fiftyone.operators as foo
 import fiftyone.operators.types as types
-import fiftyone.utils.annotations as foua
-
-import logging
-
 import numpy as np
-import segments
 from segments import SegmentsClient, SegmentsDataset
 
 
