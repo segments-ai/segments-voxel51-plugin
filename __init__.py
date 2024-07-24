@@ -216,6 +216,12 @@ class FetchAnnotations(foo.Operator):
             SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES,
         ):
             insert_segmentation_labels(dataloader, ctx.dataset, fn_sample_map)
+        elif dataset_type in (
+            SegmentsDatasetType.BBOXES,
+            SegmentsDatasetType.KEYPOINTS,
+            SegmentsDatasetType.VECTOR,
+        ):
+            insert_vector_labels(dataloader, ctx.dataset, fn_sample_map)
         else:
             raise ValueError(f"Dataset type '{dataset_type.value}' not yet supported")
 
@@ -236,7 +242,7 @@ def insert_segmentation_labels(
     annotation_count = 0
     for annotation in dataloader:
         if annotation["segmentation_bitmap"] is None:
-            # No annotation, skip
+            # No , skip
             continue
 
         name = annotation["name"]
@@ -245,6 +251,7 @@ def insert_segmentation_labels(
         id_id_map = {x["id"]: x["category_id"] for x in annotation["annotations"]}
         if 0 not in id_id_map:
             id_id_map[0] = 0
+
         id_id_func = np.vectorize(lambda x: id_id_map[x])
         segmap = id_id_func(segmap_instance)
 
@@ -252,6 +259,107 @@ def insert_segmentation_labels(
         sample.add_labels(label, label_field="ground_truth")
         sample.save()
         annotation_count += 1
+
+
+def insert_vector_labels(
+    dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
+):
+    id_cat_map = {x.id: x.name for x in dataloader.categories}
+    for annotation in dataloader:
+        if annotation["annotations"] is None:
+            continue
+
+        name = annotation["name"]
+        sample = sample_map[name]
+        if sample.metadata is None:
+            sample.compute_metadata()
+
+        image_width = sample.metadata.width
+        image_height = sample.metadata.height
+        image_size = np.array((image_width, image_height))
+
+        detections = []
+        polygons = []
+        polylines = []
+        keypoints = []
+
+        for instance in annotation["annotations"]:
+            category_name = id_cat_map[instance["category_id"]]
+            if instance["type"] == "bbox":
+                detection = _create_51_bbox(instance, image_size, category_name)
+                detections.append(detection)
+            elif instance["type"] == "polygon":
+                polygon = _create_51_polyline(
+                    instance, image_size, category_name, is_polygon=True
+                )
+                polygons.append(polygon)
+            elif instance["type"] == "polyline":
+                polyline = _create_51_polyline(
+                    instance, image_size, category_name, is_polygon=False
+                )
+                polylines.append(polyline)
+            elif instance["type"] == "point":
+                keypoint = _create_51_keypoint(instance, image_size, category_name)
+                keypoints.append(keypoint)
+            else:
+                raise ValueError(f"Could not parse annotation type: {instance['type']}")
+
+        if detections:
+            det_sample = fo.Detections(detections=detections)
+            sample["ground_truth_bboxes"] = det_sample
+        if polygons:
+            pol_sample = fo.Polylines(polylines=polygons)
+            sample["ground_truth_polygons"] = pol_sample
+        if polylines:
+            pol_sample = fo.Polylines(polylines=polylines)
+            sample["ground_truth_polylines"] = pol_sample
+        if keypoints:
+            kp_sample = fo.Keypoints(keypoints=keypoints)
+            sample["ground_truth_points"] = kp_sample
+
+        sample.save()
+
+
+def _create_51_bbox(
+    instance: dict, image_size: np.ndarray, category_name: str
+) -> fo.Detection:
+    points = np.array(instance["points"])
+    points = points / image_size[None, :]
+    width = points[1, 0] - points[0, 0]
+    height = points[1, 1] - points[0, 1]
+    detection = fo.Detection(
+        bounding_box=[points[0, 0], points[0, 1], width, height], label=category_name
+    )
+
+    return detection
+
+
+def _create_51_polyline(
+    instance: dict,
+    image_size: np.ndarray,
+    category_name: str,
+    is_polygon: bool,
+) -> fo.Polyline:
+    points = np.asarray(instance["points"])
+    points = points / image_size[None, :]
+
+    polygon = fo.Polyline(
+        label=category_name,
+        points=[points.tolist()],
+        closed=is_polygon,
+        filled=is_polygon,
+    )
+    return polygon
+
+
+def _create_51_keypoint(
+    instance: dict, image_size: np.ndarray, category_name: str
+) -> fo.Keypoint:
+    points = np.asarray(instance["points"])
+    points = points / image_size[None, :]
+
+    point = fo.Keypoint(points=points.tolist(), label=category_name)
+    return point
 
 
 def get_client(ctx) -> SegmentsClient:
