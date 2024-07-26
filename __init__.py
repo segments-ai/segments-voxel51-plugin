@@ -110,6 +110,7 @@ class RequestAnnotations(foo.Operator):
         dataset = client.add_dataset(
             ctx.params["dataset_name"],
             description="Created by the segments fiftyone plugin.",
+            metadata={"created_by": "fiftyone_plugin"},
             task_type=task_type,
             task_attributes=attributes,
         )
