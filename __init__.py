@@ -14,7 +14,9 @@ import fiftyone as fo
 import fiftyone.operators as foo
 import fiftyone.operators.types as types
 import numpy as np
+import segments
 from segments import SegmentsClient, SegmentsDataset
+import segments.typing
 
 SEGMENTS_FRONTEND_URL = "https://segments.ai"
 
@@ -34,6 +36,12 @@ class SegmentsDatasetType(enum.Enum):
     # Disabling sequences for now, how would that interface work?
     # IMAGE_SEGMENTATION_SEQUENCE = "image-segmentation-sequence"
     # IMAGE_VECTOR_SEQUENCE = "image-vector-sequence"
+    POINTCLOUD_CUBOID = "pointcloud-cuboid"
+    # POINTCLOUD_CUBOID_SEQUENCE = "pointcloud-cuboid-sequence"
+    POINTCLOUD_SEGMENTATION = "pointcloud-segmentation"
+    # POINTCLOUD_SEGMENTATION_SEQUENCE = "pointcloud-segmentation-sequence"
+    POINTCLOUD_VECTOR = "pointcloud-vector"
+    # POINTCLOUD_VECTOR_SEQUENCE = "pointcloud-vector-sequence"
 
 
 class RequestAnnotations(foo.Operator):
@@ -79,23 +87,40 @@ class RequestAnnotations(foo.Operator):
         )
 
     @staticmethod
-    def dataset_type_selector(ctx, inputs):
-        labelmap = {
-            SegmentsDatasetType.SEGMENTATION_BITMAP: "Segmentation bitmap",
-            SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES: "Segmentation bitmap highres",
-            SegmentsDatasetType.BBOXES: "Bounding boxes",
-            SegmentsDatasetType.VECTOR: "Vector",
-            SegmentsDatasetType.KEYPOINTS: "Keypoints",
-        }
-        data_choices = types.Dropdown()
-        for datatype in SegmentsDatasetType:
-            data_choices.add_choice(datatype.value, label=labelmap[datatype])
+    def dataset_type_selector(ctx, inputs, media_type: str):
+        if media_type == "image":
+            labelmap = {
+                SegmentsDatasetType.SEGMENTATION_BITMAP: "Segmentation bitmap",
+                SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES: "Segmentation bitmap highres",
+                SegmentsDatasetType.BBOXES: "Bounding boxes",
+                SegmentsDatasetType.VECTOR: "Vector",
+                SegmentsDatasetType.KEYPOINTS: "Keypoints",
+            }
+            data_choices = types.Dropdown()
+            for datatype in labelmap.keys():
+                data_choices.add_choice(datatype.value, label=labelmap[datatype])
+
+            default_selection = SegmentsDatasetType.SEGMENTATION_BITMAP.value
+
+        elif media_type == "point-cloud":
+            labelmap = {
+                SegmentsDatasetType.POINTCLOUD_CUBOID: "Pointcloud cuboid",
+                SegmentsDatasetType.POINTCLOUD_VECTOR: "Pointcloud vector",
+                SegmentsDatasetType.POINTCLOUD_SEGMENTATION: "Pointcloud segmentation",
+            }
+            data_choices = types.Dropdown()
+            for datatype in labelmap.keys():
+                data_choices.add_choice(datatype.value, label=labelmap[datatype])
+
+            default_selection = SegmentsDatasetType.POINTCLOUD_CUBOID.value
+        else:
+            raise ValueError(f"Not implemented for media type: {media_type}")
 
         inputs.enum(
             "dataset_type",
             data_choices.values(),
             label="Dataset type",
-            default=SegmentsDatasetType.SEGMENTATION_BITMAP.value,
+            default=default_selection,
             view=data_choices,
         )
 
@@ -137,7 +162,7 @@ class RequestAnnotations(foo.Operator):
 
         self.target_data_selector(ctx, inputs)
         inputs.str("dataset_name", label="Dataset Name")
-        self.dataset_type_selector(ctx, inputs)
+        self.dataset_type_selector(ctx, inputs, ctx.dataset.media_type)
 
         inputs.list(
             "classes",
@@ -377,9 +402,19 @@ def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str,
         ctx.set_progress(
             (idx + 1) / len(dataset), label=f"Uploading {idx+1}/(len(dataset))"
         )
+
         with open(s.filepath, "rb") as f:
             asset = client.upload_asset(f, Path(s.filepath).name)
-            sample_attrib = {"image": {"url": asset.url}}
+
+            if dataset.media_type == "image":
+                sample_attrib = {"image": {"url": asset.url}}
+            elif dataset.media_type == "point-cloud":
+                sample_attrib = {"pcd": {"url": asset.url, "type": "pcd"}}
+            else:
+                raise ValueError(
+                    f"Dataset upload not implemented for media type: {dataset.media_type}"
+                )
+
             client.add_sample(dataset_id, asset.filename, attributes=sample_attrib)
 
 
