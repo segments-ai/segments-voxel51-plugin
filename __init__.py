@@ -7,6 +7,7 @@ Annotation operators.
 """
 
 import enum
+from typing import Union
 import urllib.parse
 from pathlib import Path
 
@@ -14,6 +15,7 @@ import fiftyone as fo
 import fiftyone.operators as foo
 import fiftyone.operators.types as types
 import numpy as np
+import requests
 import segments
 import segments.typing
 from segments import SegmentsClient, SegmentsDataset
@@ -240,37 +242,44 @@ class FetchAnnotations(foo.Operator):
         return types.Property(inputs)
 
     def execute(self, ctx):
+        fn_sample_map = {Path(s.filepath).name: s for s in ctx.dataset}
         client = get_client(ctx)
 
         dataset_sdk = client.get_dataset(ctx.params["dataset"])
         release = client.get_release(dataset_sdk.full_name, ctx.params["release"])
-        dataloader = SegmentsDataset(release, preload=False)
 
-        # Ugly hack to make sure SegmentsDataset does not fetch all image files.
-        # for sample in dataloader.samples:
-        #     image_info = sample["attributes"]["image"]
-        #     image_info["url"] = image_info["url"].replace("https", "s3")
-
-        fn_sample_map = {Path(s.filepath).name: s for s in ctx.dataset}
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
-        if dataset_type in (
-            SegmentsDatasetType.SEGMENTATION_BITMAP,
-            SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES,
-        ):
-            insert_segmentation_labels(dataloader, ctx.dataset, fn_sample_map)
-        elif dataset_type in (
-            SegmentsDatasetType.BBOXES,
-            SegmentsDatasetType.KEYPOINTS,
-            SegmentsDatasetType.VECTOR,
-        ):
-            insert_vector_labels(dataloader, ctx.dataset, fn_sample_map)
-        elif dataset_type in (
-            SegmentsDatasetType.POINTCLOUD_CUBOID,
-            SegmentsDatasetType.POINTCLOUD_VECTOR,
-        ):
-            insert_cuboid_labels(dataloader, ctx.dataset, fn_sample_map)
+        # Pointcloud-vector is incompatible with SegmentsDataset, handle it seperately
+        if dataset_type == SegmentsDatasetType.POINTCLOUD_VECTOR:
+            response = requests.get(release.attributes.url)
+            response.raise_for_status()
+            releasefile = response.json()
+            insert_cuboid_labels(releasefile, ctx.dataset, fn_sample_map)
         else:
-            raise ValueError(f"Dataset type '{dataset_type.value}' not yet supported")
+            dataloader = SegmentsDataset(release, preload=False)
+
+            # Ugly hack to make sure SegmentsDataset does not fetch all image files.
+            # for sample in dataloader.samples:
+            #     image_info = sample["attributes"]["image"]
+            #     image_info["url"] = image_info["url"].replace("https", "s3")
+
+            if dataset_type in (
+                SegmentsDatasetType.SEGMENTATION_BITMAP,
+                SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES,
+            ):
+                insert_segmentation_labels(dataloader, ctx.dataset, fn_sample_map)
+            elif dataset_type in (
+                SegmentsDatasetType.BBOXES,
+                SegmentsDatasetType.KEYPOINTS,
+                SegmentsDatasetType.VECTOR,
+            ):
+                insert_vector_labels(dataloader, ctx.dataset, fn_sample_map)
+            elif dataset_type == SegmentsDatasetType.POINTCLOUD_CUBOID:
+                insert_cuboid_labels(dataloader, ctx.dataset, fn_sample_map)
+            elif dataset_type == SegmentsDatasetType.POINTCLOUD_SEGMENTATION:
+                raise ValueError("Importing pointcloud segmentation projects not yet supported")
+            else:
+                raise ValueError(f"Dataset type '{dataset_type.value}' not yet supported")
 
         ctx.ops.reload_dataset()
 
@@ -372,10 +381,17 @@ def insert_vector_labels(
 
 
 def insert_cuboid_labels(
-    dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
+    dataloader: Union[SegmentsDataset, dict], dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
 ):
-    id_cat_map = {x.id: x.name for x in dataloader.categories}
-    for annotation in dataloader:
+    if isinstance(dataloader, SegmentsDataset):
+        id_cat_map = {x.id: x.name for x in dataloader.categories}
+        iterable = dataloader
+    else:
+        categories = dataloader["dataset"]["task_attributes"]["categories"]
+        id_cat_map = {x["id"]: x["name"] for x in categories}
+        iterable = dataloader["dataset"]["samples"]
+
+    for annotation in iterable:
         if annotation["labels"]["ground-truth"] is None:
             continue
 
@@ -383,6 +399,9 @@ def insert_cuboid_labels(
         sample = sample_map[name]
 
         cuboids = []
+        polygons = []
+        polylines = []
+        keypoints = []
         for instance in annotation["labels"]["ground-truth"]["attributes"][
             "annotations"
         ]:
@@ -392,12 +411,29 @@ def insert_cuboid_labels(
             if type_ == "cuboid":
                 cuboid = annotation_conversion.create_51_cuboid(instance, category_name)
                 cuboids.append(cuboid)
+            elif type_ == "polygon":
+                polygon = annotation_conversion.create_51_3dpolygon(instance, category_name, is_polygon=True)
+                polygons.append(polygon)
+            elif type_ == "polyline":
+                polyline = annotation_conversion.create_51_3dpolygon(instance, category_name, is_polygon=False)
+                polylines.append(polyline)
+            elif type_ == "point":
+                pass  # Not supported by fiftyone, somehow warn the user?
             else:
                 raise ValueError(f"Not implemented for annoation type: {type_}")
 
         if cuboids:
             det_sample = fo.Detections(detections=cuboids)
             sample["ground_truth_cuboids"] = det_sample
+        if polygons:
+            pol_sample = fo.Polylines(polylines=polygons)
+            sample["ground_truth_polygons"] = pol_sample
+        if polylines:
+            pol_sample = fo.Polylines(polylines=polylines)
+            sample["ground_truth_polylines"] = pol_sample
+        if keypoints:
+            pol_sample = fo.Polylines(polylines=keypoints)
+            sample["ground_truth_points"] = pol_sample
 
         sample.save()
 
