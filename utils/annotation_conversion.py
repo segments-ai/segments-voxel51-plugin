@@ -59,8 +59,12 @@ def create_51_keypoint(
     point = fo.Keypoint(points=points.tolist(), label=category_name)
     return point
 
-def create_51_3dpolygon(instance: dict, category_name: str, is_polygon: bool) -> fo.Polyline:
-    points = np.array(instance["points"])
-    line = fo.Polyline(label=category_name, points3d=[points.tolist()], closed=is_polygon)
-    return line
 
+def create_51_3dpolygon(
+    instance: dict, category_name: str, is_polygon: bool
+) -> fo.Polyline:
+    points = np.array(instance["points"])
+    line = fo.Polyline(
+        label=category_name, points3d=[points.tolist()], closed=is_polygon
+    )
+    return line
