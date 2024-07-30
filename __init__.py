@@ -6,6 +6,8 @@ Annotation operators.
 |
 """
 
+from collections import namedtuple
+from dataclasses import dataclass
 import enum
 import urllib.parse
 from pathlib import Path
@@ -37,10 +39,10 @@ class SegmentsDatasetType(enum.Enum):
     # IMAGE_SEGMENTATION_SEQUENCE = "image-segmentation-sequence"
     # IMAGE_VECTOR_SEQUENCE = "image-vector-sequence"
     POINTCLOUD_CUBOID = "pointcloud-cuboid"
-    # POINTCLOUD_CUBOID_SEQUENCE = "pointcloud-cuboid-sequence"
     POINTCLOUD_SEGMENTATION = "pointcloud-segmentation"
-    # POINTCLOUD_SEGMENTATION_SEQUENCE = "pointcloud-segmentation-sequence"
     POINTCLOUD_VECTOR = "pointcloud-vector"
+    # POINTCLOUD_CUBOID_SEQUENCE = "pointcloud-cuboid-sequence"
+    # POINTCLOUD_SEGMENTATION_SEQUENCE = "pointcloud-segmentation-sequence"
     # POINTCLOUD_VECTOR_SEQUENCE = "pointcloud-vector-sequence"
 
 
@@ -125,6 +127,7 @@ class RequestAnnotations(foo.Operator):
         )
 
     def execute(self, ctx):
+        # TODO: might execute too often, cache API requests?
         attributes = {"format_version": "0.1", "categories": []}
         for idx, cls in enumerate(ctx.params["classes"]):
             attributes["categories"].append({"id": idx + 1, "name": cls})
@@ -192,12 +195,16 @@ class FetchAnnotations(foo.Operator):
         )
 
     def resolve_input(self, ctx):
+        # TODO: might execute too often, cache API requests?
         inputs = types.Object()
         choices_dataset = types.Choices()
         client = get_client(ctx)
 
-        for dataset in client.get_datasets():
-            choices_dataset.add_choice(dataset.full_name, label=dataset.name)
+        datasets = client.get_datasets()
+
+        for dataset in datasets:
+            if task_type_matches(ctx.dataset.media_type, dataset.task_type):
+                choices_dataset.add_choice(dataset.full_name, label=dataset.name)
 
         inputs.enum(
             "dataset",
@@ -231,9 +238,9 @@ class FetchAnnotations(foo.Operator):
         dataloader = SegmentsDataset(release, preload=False)
 
         # Ugly hack to make sure SegmentsDataset does not fetch all image files.
-        for sample in dataloader.samples:
-            image_info = sample["attributes"]["image"]
-            image_info["url"] = image_info["url"].replace("https", "s3")
+        # for sample in dataloader.samples:
+        #     image_info = sample["attributes"]["image"]
+        #     image_info["url"] = image_info["url"].replace("https", "s3")
 
         fn_sample_map = {Path(s.filepath).name: s for s in ctx.dataset}
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
@@ -248,6 +255,11 @@ class FetchAnnotations(foo.Operator):
             SegmentsDatasetType.VECTOR,
         ):
             insert_vector_labels(dataloader, ctx.dataset, fn_sample_map)
+        elif dataset_type in (
+            SegmentsDatasetType.POINTCLOUD_CUBOID,
+            SegmentsDatasetType.POINTCLOUD_VECTOR,
+        ):
+            insert_cuboid_labels(dataloader, ctx.dataset, fn_sample_map)
         else:
             raise ValueError(f"Dataset type '{dataset_type.value}' not yet supported")
 
@@ -346,6 +358,61 @@ def insert_vector_labels(
         sample.save()
 
 
+def insert_cuboid_labels(
+    dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
+):
+    id_cat_map = {x.id: x.name for x in dataloader.categories}
+    for annotation in dataloader:
+        if annotation["labels"]["ground-truth"] is None:
+            continue
+
+        name = annotation["name"]
+        sample = sample_map[name]
+
+        cuboids = []
+        for instance in annotation["labels"]["ground-truth"]["attributes"][
+            "annotations"
+        ]:
+            category_name = id_cat_map[instance["category_id"]]
+            type_ = instance["type"]
+
+            if type_ == "cuboid":
+                cuboid = _create_51_cuboid(instance, category_name)
+                cuboids.append(cuboid)
+            else:
+                raise ValueError(f"Not implemented for annoation type: {type_}")
+
+        if cuboids:
+            det_sample = fo.Detections(detections=cuboids)
+            sample["ground_truth_cuboids"] = det_sample
+
+        sample.save()
+
+
+@dataclass
+class Point3D:
+    x: float
+    y: float
+    z: float
+
+    def array(self):
+        return np.array((self.x, self.y, self.z))
+
+
+def _create_51_cuboid(instance: dict, category_name: str):
+    position = Point3D(**instance["position"]).array().tolist()
+    dims = Point3D(**instance["dimensions"]).array().tolist()
+
+    detection = fo.Detection(
+        label=category_name,
+        location=position,
+        dimensions=dims,
+        rotation=[0, 0, instance["yaw"]],
+    )
+
+    return detection
+
+
 def _create_51_bbox(
     instance: dict, image_size: np.ndarray, category_name: str
 ) -> fo.Detection:
@@ -416,6 +483,28 @@ def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str,
                 )
 
             client.add_sample(dataset_id, asset.filename, attributes=sample_attrib)
+
+
+def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) -> bool:
+    if media_type == "image":
+        return seg_task_type in (
+            segments.typing.TaskType.SEGMENTATION_BITMAP,
+            segments.typing.TaskType.SEGMENTATION_BITMAP_HIGHRES,
+            segments.typing.TaskType.IMAGE_SEGMENTATION_SEQUENCE,
+            segments.typing.TaskType.BBOXES,
+            segments.typing.TaskType.VECTOR,
+            segments.typing.TaskType.IMAGE_VECTOR_SEQUENCE,
+            segments.typing.TaskType.KEYPOINTS,
+        )
+
+    elif media_type == "point-cloud":
+        return seg_task_type in (
+            segments.typing.TaskType.POINTCLOUD_CUBOID,
+            segments.typing.TaskType.POINTCLOUD_SEGMENTATION,
+            segments.typing.TaskType.POINTCLOUD_VECTOR,
+        )
+    else:
+        raise ValueError(f"Not implemented for media type: {media_type}")
 
 
 def register(p):
