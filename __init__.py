@@ -201,13 +201,15 @@ class FetchAnnotations(foo.Operator):
         inputs = types.Object()
         choices_dataset = types.Choices()
 
-        if not helpers.in_cache(ctx, "segment_datasets_cache"): 
+        if not helpers.in_cache(ctx, "segment_datasets_cache"):
             client = get_client(ctx)
             datasets = client.get_datasets()
             filtered_dataset = []
             for dataset in datasets:
                 if task_type_matches(ctx.dataset.media_type, dataset.task_type):
-                    filtered_dataset.append({"full_name": dataset.full_name, "name": dataset.name})
+                    filtered_dataset.append(
+                        {"full_name": dataset.full_name, "name": dataset.name}
+                    )
         else:
             filtered_dataset = helpers.fetch_cache(ctx, "segment_datasets_cache")
 
@@ -242,7 +244,7 @@ class FetchAnnotations(foo.Operator):
         return types.Property(inputs)
 
     def execute(self, ctx):
-        fn_sample_map = {Path(s.filepath).name: s for s in ctx.dataset}
+        fn_sample_map = helpers.pcd_filename_map(ctx.dataset)
         client = get_client(ctx)
 
         dataset_sdk = client.get_dataset(ctx.params["dataset"])
@@ -277,9 +279,13 @@ class FetchAnnotations(foo.Operator):
             elif dataset_type == SegmentsDatasetType.POINTCLOUD_CUBOID:
                 insert_cuboid_labels(dataloader, ctx.dataset, fn_sample_map)
             elif dataset_type == SegmentsDatasetType.POINTCLOUD_SEGMENTATION:
-                raise ValueError("Importing pointcloud segmentation projects not yet supported")
+                raise ValueError(
+                    "Importing pointcloud segmentation projects not yet supported"
+                )
             else:
-                raise ValueError(f"Dataset type '{dataset_type.value}' not yet supported")
+                raise ValueError(
+                    f"Dataset type '{dataset_type.value}' not yet supported"
+                )
 
         ctx.ops.reload_dataset()
 
@@ -381,7 +387,9 @@ def insert_vector_labels(
 
 
 def insert_cuboid_labels(
-    dataloader: Union[SegmentsDataset, dict], dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
+    dataloader: Union[SegmentsDataset, dict],
+    dataset: fo.Dataset,
+    sample_map: dict[str, fo.Sample],
 ):
     if isinstance(dataloader, SegmentsDataset):
         id_cat_map = {x.id: x.name for x in dataloader.categories}
@@ -412,10 +420,14 @@ def insert_cuboid_labels(
                 cuboid = annotation_conversion.create_51_cuboid(instance, category_name)
                 cuboids.append(cuboid)
             elif type_ == "polygon":
-                polygon = annotation_conversion.create_51_3dpolygon(instance, category_name, is_polygon=True)
+                polygon = annotation_conversion.create_51_3dpolygon(
+                    instance, category_name, is_polygon=True
+                )
                 polygons.append(polygon)
             elif type_ == "polyline":
-                polyline = annotation_conversion.create_51_3dpolygon(instance, category_name, is_polygon=False)
+                polyline = annotation_conversion.create_51_3dpolygon(
+                    instance, category_name, is_polygon=False
+                )
                 polylines.append(polyline)
             elif type_ == "point":
                 pass  # Not supported by fiftyone, somehow warn the user?
@@ -490,7 +502,7 @@ def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) 
             segments.typing.TaskType.KEYPOINTS,
         )
 
-    elif media_type == "point-cloud":
+    elif media_type == "point-cloud" or media_type == "3d":
         return seg_task_type in (
             segments.typing.TaskType.POINTCLOUD_CUBOID,
             segments.typing.TaskType.POINTCLOUD_SEGMENTATION,

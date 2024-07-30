@@ -2,8 +2,10 @@ from dataclasses import dataclass
 import codecs
 import json
 import base64
+from pathlib import Path
 
 import numpy as np
+import fiftyone as fo
 import fiftyone.operators.types as types
 
 
@@ -36,3 +38,15 @@ def add_cache(inputs, cache_key: str, cache_data: list[dict]):
     encoded = base64.encodebytes(encoded).decode("utf-8")
 
     inputs.str(cache_key, default=encoded, view=types.HiddenView())
+
+
+def pcd_filename_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
+    if dataset.media_type != "3d":
+        return {Path(s.filepath).name: s for s in dataset}
+    else:
+        try:
+            return {s["source_pcd_filename"]: s for s in dataset}
+        except KeyError:
+            raise KeyError(
+                "Expected to find 'source_pcd_filename' attribute in sample. This is required to match segments.ai annotations with fiftyone samples."
+            )
