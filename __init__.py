@@ -198,9 +198,9 @@ class FetchAnnotations(foo.Operator):
         # TODO: might execute too often, cache API requests?
         inputs = types.Object()
         choices_dataset = types.Choices()
-        client = get_client(ctx)
 
         if not helpers.in_cache(ctx, "segment_datasets_cache"): 
+            client = get_client(ctx)
             datasets = client.get_datasets()
             filtered_dataset = []
             for dataset in datasets:
@@ -223,6 +223,7 @@ class FetchAnnotations(foo.Operator):
         )
 
         if (dataset := ctx.params.get("dataset", None)) is not None:
+            client = get_client(ctx)
             releases = client.get_releases(dataset)
             choices_releases = types.Choices()
             for release in releases:
@@ -401,7 +402,12 @@ def insert_cuboid_labels(
         sample.save()
 
 
+_CLIENT = None
 def get_client(ctx) -> SegmentsClient:
+    global _CLIENT
+    if _CLIENT is not None:
+        return _CLIENT
+
     api_key = ctx.secrets.get("SEGMENTS_API_KEY")
     # Sometimes a missing secret is `None`, sometimes it's an empty string.
     segments_url = ctx.secrets.get("SEGMENTS_URL", None)
@@ -411,6 +417,7 @@ def get_client(ctx) -> SegmentsClient:
     else:
         client = SegmentsClient(api_key)
 
+    _CLIENT = client
     return client
 
 
