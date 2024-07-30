@@ -18,7 +18,7 @@ import segments
 import segments.typing
 from segments import SegmentsClient, SegmentsDataset
 
-from .utils import annotation_conversion
+from .utils import annotation_conversion, helpers
 
 SEGMENTS_FRONTEND_URL = "https://segments.ai"
 
@@ -200,17 +200,19 @@ class FetchAnnotations(foo.Operator):
         choices_dataset = types.Choices()
         client = get_client(ctx)
 
-        # dset_cache = ctx.params.get("dataset_cache", None)
-        # if dset_cache is not None:
-        #     DatasetMockType = namedtuple("Mockdataset", "full_name name")
-        #     datasets = json.loads(dset_cache)
-        #     datasets = [DatasetMockType(**x) for x in datasets]
-        # else:
-        datasets = client.get_datasets()
+        if not helpers.in_cache(ctx, "segment_datasets_cache"): 
+            datasets = client.get_datasets()
+            filtered_dataset = []
+            for dataset in datasets:
+                if task_type_matches(ctx.dataset.media_type, dataset.task_type):
+                    filtered_dataset.append({"full_name": dataset.full_name, "name": dataset.name})
+        else:
+            filtered_dataset = helpers.fetch_cache(ctx, "segment_datasets_cache")
 
-        for dataset in datasets:
-            if task_type_matches(ctx.dataset.media_type, dataset.task_type):
-                choices_dataset.add_choice(dataset.full_name, label=dataset.name)
+        helpers.add_cache(inputs, "segment_datasets_cache", filtered_dataset)
+
+        for dataset in filtered_dataset:
+            choices_dataset.add_choice(dataset["full_name"], label=dataset["name"])
 
         inputs.enum(
             "dataset",
@@ -219,8 +221,6 @@ class FetchAnnotations(foo.Operator):
             label="Dataset",
             required=True,
         )
-        # dset_cache_encoded = json.dumps(dset_cache_list)
-        # inputs.str("dataset_cache", default=dset_cache_encoded, view=types.HiddenView())
 
         if (dataset := ctx.params.get("dataset", None)) is not None:
             releases = client.get_releases(dataset)
