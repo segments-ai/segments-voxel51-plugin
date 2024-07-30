@@ -6,8 +6,6 @@ Annotation operators.
 |
 """
 
-from collections import namedtuple
-from dataclasses import dataclass
 import enum
 import urllib.parse
 from pathlib import Path
@@ -17,8 +15,10 @@ import fiftyone.operators as foo
 import fiftyone.operators.types as types
 import numpy as np
 import segments
-from segments import SegmentsClient, SegmentsDataset
 import segments.typing
+from segments import SegmentsClient, SegmentsDataset
+
+from .utils import annotation_conversion
 
 SEGMENTS_FRONTEND_URL = "https://segments.ai"
 
@@ -200,6 +200,12 @@ class FetchAnnotations(foo.Operator):
         choices_dataset = types.Choices()
         client = get_client(ctx)
 
+        # dset_cache = ctx.params.get("dataset_cache", None)
+        # if dset_cache is not None:
+        #     DatasetMockType = namedtuple("Mockdataset", "full_name name")
+        #     datasets = json.loads(dset_cache)
+        #     datasets = [DatasetMockType(**x) for x in datasets]
+        # else:
         datasets = client.get_datasets()
 
         for dataset in datasets:
@@ -213,6 +219,8 @@ class FetchAnnotations(foo.Operator):
             label="Dataset",
             required=True,
         )
+        # dset_cache_encoded = json.dumps(dset_cache_list)
+        # inputs.str("dataset_cache", default=dset_cache_encoded, view=types.HiddenView())
 
         if (dataset := ctx.params.get("dataset", None)) is not None:
             releases = client.get_releases(dataset)
@@ -324,20 +332,24 @@ def insert_vector_labels(
         for instance in annotation["annotations"]:
             category_name = id_cat_map[instance["category_id"]]
             if instance["type"] == "bbox":
-                detection = _create_51_bbox(instance, image_size, category_name)
+                detection = annotation_conversion.create_51_bbox(
+                    instance, image_size, category_name
+                )
                 detections.append(detection)
             elif instance["type"] == "polygon":
-                polygon = _create_51_polyline(
+                polygon = annotation_conversion.create_51_polyline(
                     instance, image_size, category_name, is_polygon=True
                 )
                 polygons.append(polygon)
             elif instance["type"] == "polyline":
-                polyline = _create_51_polyline(
+                polyline = annotation_conversion.create_51_polyline(
                     instance, image_size, category_name, is_polygon=False
                 )
                 polylines.append(polyline)
             elif instance["type"] == "point":
-                keypoint = _create_51_keypoint(instance, image_size, category_name)
+                keypoint = annotation_conversion.create_51_keypoint(
+                    instance, image_size, category_name
+                )
                 keypoints.append(keypoint)
             else:
                 raise ValueError(f"Could not parse annotation type: {instance['type']}")
@@ -377,7 +389,7 @@ def insert_cuboid_labels(
             type_ = instance["type"]
 
             if type_ == "cuboid":
-                cuboid = _create_51_cuboid(instance, category_name)
+                cuboid = annotation_conversion.create_51_cuboid(instance, category_name)
                 cuboids.append(cuboid)
             else:
                 raise ValueError(f"Not implemented for annoation type: {type_}")
@@ -387,72 +399,6 @@ def insert_cuboid_labels(
             sample["ground_truth_cuboids"] = det_sample
 
         sample.save()
-
-
-@dataclass
-class Point3D:
-    x: float
-    y: float
-    z: float
-
-    def array(self):
-        return np.array((self.x, self.y, self.z))
-
-
-def _create_51_cuboid(instance: dict, category_name: str):
-    position = Point3D(**instance["position"]).array().tolist()
-    dims = Point3D(**instance["dimensions"]).array().tolist()
-
-    detection = fo.Detection(
-        label=category_name,
-        location=position,
-        dimensions=dims,
-        rotation=[0, 0, instance["yaw"]],
-    )
-
-    return detection
-
-
-def _create_51_bbox(
-    instance: dict, image_size: np.ndarray, category_name: str
-) -> fo.Detection:
-    points = np.array(instance["points"])
-    points = points / image_size[None, :]
-    width = points[1, 0] - points[0, 0]
-    height = points[1, 1] - points[0, 1]
-    detection = fo.Detection(
-        bounding_box=[points[0, 0], points[0, 1], width, height], label=category_name
-    )
-
-    return detection
-
-
-def _create_51_polyline(
-    instance: dict,
-    image_size: np.ndarray,
-    category_name: str,
-    is_polygon: bool,
-) -> fo.Polyline:
-    points = np.asarray(instance["points"])
-    points = points / image_size[None, :]
-
-    polygon = fo.Polyline(
-        label=category_name,
-        points=[points.tolist()],
-        closed=is_polygon,
-        filled=is_polygon,
-    )
-    return polygon
-
-
-def _create_51_keypoint(
-    instance: dict, image_size: np.ndarray, category_name: str
-) -> fo.Keypoint:
-    points = np.asarray(instance["points"])
-    points = points / image_size[None, :]
-
-    point = fo.Keypoint(points=points.tolist(), label=category_name)
-    return point
 
 
 def get_client(ctx) -> SegmentsClient:
