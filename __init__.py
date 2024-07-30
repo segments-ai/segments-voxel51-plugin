@@ -457,10 +457,14 @@ def _create_51_keypoint(
 
 def get_client(ctx) -> SegmentsClient:
     api_key = ctx.secrets.get("SEGMENTS_API_KEY")
-    if (segments_url := ctx.secrets.get("SEGMENTS_URL", None)) is not None:
+    # Sometimes a missing secret is `None`, sometimes it's an empty string.
+    segments_url = ctx.secrets.get("SEGMENTS_URL", None)
+    if segments_url:
+        raise ValueError(f"{segments_url=}")
         client = SegmentsClient(api_key, api_url=segments_url)
     else:
         client = SegmentsClient(api_key)
+
     return client
 
 
