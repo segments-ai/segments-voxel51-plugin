@@ -295,6 +295,70 @@ class FetchAnnotations(foo.Operator):
         return types.Property(outputs, view=view)
 
 
+class AddIssue(foo.Operator):
+    @property
+    def config(self):
+        return foo.OperatorConfig(
+            name="add_issue",
+            light_icon="/assets/Black icon.svg",
+            dark_icon="/assets/White icon.svg",
+            label="Add issue to segments.ai sample",
+            dynamic=False,
+        )
+
+    def resolve_input(self, ctx):
+        inputs = types.Object()
+        if not bool(ctx.selected):
+            # TODO: Show error message
+            return
+
+        if len(ctx.selected) > 1:
+            # TODO: Show error message
+            return
+
+        choices_dataset = types.Choices()
+
+        client = get_client(ctx)
+        datasets = client.get_datasets()
+        filtered_dataset = []
+        for dataset in datasets:
+            if task_type_matches(ctx.dataset.media_type, dataset.task_type):
+                filtered_dataset.append(
+                    {"full_name": dataset.full_name, "name": dataset.name}
+                )
+
+        for dataset in filtered_dataset:
+            choices_dataset.add_choice(dataset["full_name"], label=dataset["name"])
+
+        inputs.enum(
+            "dataset",
+            choices_dataset.values(),
+            view=choices_dataset,
+            label="Dataset",
+            required=True,
+        )
+
+        inputs.str("description", allow_empty=False, view=types.TextFieldView())
+        return types.Property(inputs)
+
+    def execute(self, ctx):
+        client = get_client(ctx)
+        samples = client.get_samples(ctx.params["dataset"])
+        s_id = ctx.selected[0]
+        selected_sample = ctx.dataset[s_id]
+        samplename = helpers.segments_samplename_from_51(selected_sample)
+        for sample in samples:
+            if sample.name == samplename:
+                break
+        else:
+            raise KeyError(f"Could not find sample with name {samplename} in dataset {ctx.params['dataset']}")
+
+        uuid = sample.uuid
+        client.add_issue(uuid, ctx.params["description"])
+
+    def resolve_output(self, ctx):
+        pass
+
 def insert_segmentation_labels(
     dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
 ):
@@ -515,3 +579,4 @@ def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) 
 def register(p):
     p.register(RequestAnnotations)
     p.register(FetchAnnotations)
+    p.register(AddIssue)

@@ -8,6 +8,7 @@ license: "TODO"
 operators:
   - request_annotations
   - fetch_annotations
+  - add_issue
 secrets:
  - SEGMENTS_API_KEY
  - SEGMENTS_URL
