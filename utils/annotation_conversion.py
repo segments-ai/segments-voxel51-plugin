@@ -64,7 +64,10 @@ def create_51_3dpolygon(
     instance: dict, category_name: str, is_polygon: bool
 ) -> fo.Polyline:
     points = np.array(instance["points"])
+    if is_polygon:
+        points = np.concatenate((points, points[0:1,:]), axis=0)
+
     line = fo.Polyline(
-        label=category_name, points3d=[points.tolist()], closed=is_polygon
+        label=category_name, points3d=[points.tolist()]
     )
     return line
