@@ -308,13 +308,11 @@ class AddIssue(foo.Operator):
 
     def resolve_input(self, ctx):
         inputs = types.Object()
-        if not bool(ctx.selected):
-            # TODO: Show error message
-            return
-
-        if len(ctx.selected) > 1:
-            # TODO: Show error message
-            return
+        if not bool(ctx.selected) or len(ctx.selected) > 1:
+            warning = types.Warning(label="Please select 1 sample")
+            prop = inputs.view("warning", warning)
+            prop.invalid =True
+            return types.Property(inputs, view=types.View(label="Add issue to segments.ai"))
 
         choices_dataset = types.Choices()
 
