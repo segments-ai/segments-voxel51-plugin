@@ -45,7 +45,7 @@ def pcd_filename_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
         return {Path(s.filepath).name: s for s in dataset}
     else:
         try:
-            return {s["source_pcd_filename"]: s for s in dataset}
+            return {s["segments_pc_filename"]: s for s in dataset}
         except KeyError:
             raise KeyError(
                 "Expected to find 'source_pcd_filename' attribute in sample. This is required to match segments.ai annotations with fiftyone samples."
