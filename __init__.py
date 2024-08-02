@@ -3,7 +3,7 @@ Operators for integrating with segments.ai
 """
 
 import enum
-from typing import Union
+from typing import Optional, Union
 import urllib.parse
 from pathlib import Path
 
@@ -45,6 +45,11 @@ class SegmentsDatasetType(enum.Enum):
     # POINTCLOUD_VECTOR_SEQUENCE = "pointcloud-vector-sequence"
 
 
+class DatasetUploadTarget(enum.Enum):
+    NEW = "New"
+    APPEND = "Append"
+
+
 class RequestAnnotations(foo.Operator):
     @property
     def config(self):
@@ -53,7 +58,7 @@ class RequestAnnotations(foo.Operator):
             label="Request Segments.ai annotations",
             light_icon="/assets/Black icon.svg",
             dark_icon="/assets/White icon.svg",
-            dynamic=False,
+            dynamic=True,
         )
 
     @staticmethod
@@ -126,25 +131,30 @@ class RequestAnnotations(foo.Operator):
         )
 
     def execute(self, ctx):
-        attributes = {"format_version": "0.1", "categories": []}
-        for idx, cls in enumerate(ctx.params["classes"]):
-            attributes["categories"].append({"id": idx + 1, "name": cls})
-
-        task_type = ctx.params["dataset_type"]
+        data_upload_target = DatasetUploadTarget(ctx.params["dataset_choice"])
+        dataset_view = self.target_dataset_view(ctx)
 
         client = get_client(ctx)
-        dataset = client.add_dataset(
-            ctx.params["dataset_name"],
-            description="Created by the segments fiftyone plugin.",
-            metadata={"created_by": "fiftyone_plugin"},
-            task_type=task_type,
-            task_attributes=attributes,
-        )
+        if data_upload_target == DatasetUploadTarget.NEW:
+            task_type = ctx.params["dataset_type"]
+            attributes = {"format_version": "0.1", "categories": []}
+            for idx, cls in enumerate(ctx.params["classes"]):
+                attributes["categories"].append({"id": idx + 1, "name": cls})
 
-        dataset_view = self.target_dataset_view(ctx)
-        url = urllib.parse.urljoin(SEGMENTS_FRONTEND_URL, dataset.full_name)
+            dataset = client.add_dataset(
+                ctx.params["dataset_name"],
+                description="Created by the segments fiftyone plugin.",
+                metadata={"created_by": "fiftyone_plugin"},
+                task_type=task_type,
+                task_attributes=attributes,
+            )
+        elif data_upload_target == DatasetUploadTarget.APPEND:
+            dataset_name = _fetch_selected_dataset_name(ctx)
+            dataset = client.get_dataset(dataset_name)
+
         upload_dataset(client, dataset_view, dataset.full_name, ctx)
 
+        url = urllib.parse.urljoin(SEGMENTS_FRONTEND_URL, dataset.full_name)
         return {"segments_dataset": dataset.full_name, "url": url}
 
     def target_dataset_view(self, ctx):
@@ -160,17 +170,48 @@ class RequestAnnotations(foo.Operator):
 
     def resolve_input(self, ctx):
         inputs = types.Object()
+        dataset_name = _fetch_selected_dataset_name(ctx)
 
         self.target_data_selector(ctx, inputs)
-        inputs.str("dataset_name", label="Dataset Name")
-        self.dataset_type_selector(ctx, inputs, ctx.dataset.media_type)
 
-        inputs.list(
-            "classes",
-            types.String(),
-            label="Classes",
-            description="The annotation labels",
+        default_dataset_choice = DatasetUploadTarget.NEW.value
+        seg_dataset_choices = types.RadioGroup(orientation="horizontal")
+        if dataset_name is not None:
+            seg_dataset_choices.add_choice(
+                DatasetUploadTarget.APPEND.value,
+                label=DatasetUploadTarget.APPEND.value,
+                description="Append samples to segments.ai dataset.",
+            )
+            default_dataset_choice = DatasetUploadTarget.APPEND.value
+
+        seg_dataset_choices.add_choice(
+            DatasetUploadTarget.NEW.value,
+            label=DatasetUploadTarget.NEW.value,
+            description="Create a new segments.ai dataset from these samples",
         )
+        inputs.enum(
+            "dataset_choice",
+            seg_dataset_choices.values(),
+            view=seg_dataset_choices,
+            label="New or existing dataset?",
+            default=default_dataset_choice,
+        )
+
+        if ctx.params.get("dataset_choice", "") == DatasetUploadTarget.NEW.value:
+            inputs.str("dataset_name", label="Dataset Name")
+            self.dataset_type_selector(ctx, inputs, ctx.dataset.media_type)
+
+            inputs.list(
+                "classes",
+                types.String(),
+                label="Classes",
+                description="The annotation labels",
+            )
+        else:
+            dset = types.Notice(
+                label=f"Appending data to segments.ai dataset: {dataset_name}"
+            )
+            inputs.view("dataset_name", dset)
 
         return types.Property(inputs)
 
@@ -194,16 +235,12 @@ class FetchAnnotations(foo.Operator):
 
     def resolve_input(self, ctx):
         inputs = types.Object()
-        try:
-            run_result = ctx.dataset.load_run_results(
-                SEGMENTS_METADATA_KEY, cache=False
-            )
-        except ValueError:
+        dataset_name = _fetch_selected_dataset_name(ctx)
+        if dataset_name is None:
             return _no_dset_selected_warning(inputs)
 
-        dataset_name = run_result.dataset_full_name
         dset = types.Notice(
-            label=f"Fetching annotations from segments.ai dataset: {run_result.dataset_full_name}"
+            label=f"Fetching annotations from segments.ai dataset: {dataset_name}"
         )
         inputs.view("dataset_name", dset)
 
@@ -299,15 +336,12 @@ class AddIssue(foo.Operator):
                 inputs, view=types.View(label="Add issue to segments.ai")
             )
 
-        try:
-            run_result = ctx.dataset.load_run_results(
-                SEGMENTS_METADATA_KEY, cache=False
-            )
-        except ValueError:
+        dataset_full_name = _fetch_selected_dataset_name(ctx)
+        if dataset_full_name is None:
             return _no_dset_selected_warning(inputs)
 
         dset = types.Notice(
-            label=f"Making issue in segments.ai dataset: {run_result.dataset_full_name}"
+            label=f"Making issue in segments.ai dataset: {dataset_full_name}"
         )
         inputs.view("dataset_name", dset)
         inputs.str(
@@ -401,7 +435,7 @@ def insert_segmentation_labels(
     annotation_count = 0
     for annotation in dataloader:
         if annotation["segmentation_bitmap"] is None:
-            # No , skip
+            # No segmentation annotation, skip
             continue
 
         name = annotation["name"]
@@ -617,6 +651,14 @@ def _no_dset_selected_warning(inputs):
     prop = inputs.view("warning", warning)
     prop.invalid = True
     return types.Property(inputs, view=types.View(label="No dataset selected"))
+
+
+def _fetch_selected_dataset_name(ctx) -> Optional[str]:
+    try:
+        run_result = ctx.dataset.load_run_results(SEGMENTS_METADATA_KEY, cache=False)
+        return run_result.dataset_full_name
+    except ValueError:
+        return None
 
 
 def register(p):
