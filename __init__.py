@@ -264,7 +264,7 @@ class FetchAnnotations(foo.Operator):
         run_result = ctx.dataset.load_run_results(SEGMENTS_METADATA_KEY, cache=False)
         dataset_name = run_result.dataset_full_name
 
-        fn_sample_map = helpers.pcd_filename_map(ctx.dataset)
+        uuid_sample_map = helpers.create_uuid_sample_map(ctx.dataset)
         client = get_client(ctx)
 
         dataset_sdk = client.get_dataset(dataset_name)
@@ -276,7 +276,7 @@ class FetchAnnotations(foo.Operator):
             response = requests.get(release.attributes.url)
             response.raise_for_status()
             releasefile = response.json()
-            insert_cuboid_labels(releasefile, ctx.dataset, fn_sample_map)
+            insert_cuboid_labels(releasefile, ctx.dataset, uuid_sample_map)
         else:
             dataloader = SegmentsDataset(release, preload=False)
 
@@ -289,15 +289,15 @@ class FetchAnnotations(foo.Operator):
                 SegmentsDatasetType.SEGMENTATION_BITMAP,
                 SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES,
             ):
-                insert_segmentation_labels(dataloader, ctx.dataset, fn_sample_map)
+                insert_segmentation_labels(dataloader, ctx.dataset, uuid_sample_map)
             elif dataset_type in (
                 SegmentsDatasetType.BBOXES,
                 SegmentsDatasetType.KEYPOINTS,
                 SegmentsDatasetType.VECTOR,
             ):
-                insert_vector_labels(dataloader, ctx.dataset, fn_sample_map)
+                insert_vector_labels(dataloader, ctx.dataset, uuid_sample_map)
             elif dataset_type == SegmentsDatasetType.POINTCLOUD_CUBOID:
-                insert_cuboid_labels(dataloader, ctx.dataset, fn_sample_map)
+                insert_cuboid_labels(dataloader, ctx.dataset, uuid_sample_map)
             elif dataset_type == SegmentsDatasetType.POINTCLOUD_SEGMENTATION:
                 raise ValueError(
                     "Importing pointcloud segmentation projects not yet supported"
@@ -438,8 +438,7 @@ def insert_segmentation_labels(
             # No segmentation annotation, skip
             continue
 
-        name = annotation["name"]
-        sample = sample_map[name]
+        sample = sample_map[annotation["uuid"]]
         segmap_instance = np.asarray(annotation["segmentation_bitmap"])
         id_id_map = {x["id"]: x["category_id"] for x in annotation["annotations"]}
         if 0 not in id_id_map:
@@ -462,8 +461,7 @@ def insert_vector_labels(
         if annotation["annotations"] is None:
             continue
 
-        name = annotation["name"]
-        sample = sample_map[name]
+        sample = sample_map[annotation["uuid"]]
         if sample.metadata is None:
             sample.compute_metadata()
 
@@ -534,8 +532,7 @@ def insert_cuboid_labels(
         if annotation["labels"]["ground-truth"] is None:
             continue
 
-        name = annotation["name"]
-        sample = sample_map[name]
+        sample = sample_map[annotation["uuid"]]
 
         cuboids = []
         polygons = []
@@ -619,7 +616,9 @@ def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str,
                     f"Dataset upload not implemented for media type: {dataset.media_type}"
                 )
 
-            client.add_sample(dataset_id, asset.filename, attributes=sample_attrib)
+            segments_sample = client.add_sample(dataset_id, asset.filename, attributes=sample_attrib)
+            s["segments_uuid"] = segments_sample.uuid
+            s.save()
 
 
 def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) -> bool:
