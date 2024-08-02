@@ -126,7 +126,6 @@ class RequestAnnotations(foo.Operator):
         )
 
     def execute(self, ctx):
-        # TODO: might execute too often, cache API requests?
         attributes = {"format_version": "0.1", "categories": []}
         for idx, cls in enumerate(ctx.params["classes"]):
             attributes["categories"].append({"id": idx + 1, "name": cls})
@@ -194,7 +193,6 @@ class FetchAnnotations(foo.Operator):
         )
 
     def resolve_input(self, ctx):
-        # TODO: might execute too often, cache API requests?
         inputs = types.Object()
         try:
             run_result = ctx.dataset.load_run_results(
