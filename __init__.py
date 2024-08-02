@@ -177,7 +177,7 @@ class RequestAnnotations(foo.Operator):
     def resolve_output(self, ctx):
         outputs = types.Object()
         view = types.View(label="New dataset created")
-        outputs.str("url", label="Dataset URL")
+        outputs.str("url", label="Dataset URL", view=types.MarkdownView())
         return types.Property(outputs, view=view)
 
 
