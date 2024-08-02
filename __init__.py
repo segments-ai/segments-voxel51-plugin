@@ -1,9 +1,5 @@
 """
-Annotation operators.
-
-| Copyright 2017-2023, Voxel51, Inc.
-| `voxel51.com <https://voxel51.com/>`_
-|
+Operators for integrating with segments.ai
 """
 
 import enum
@@ -23,6 +19,7 @@ from segments import SegmentsClient, SegmentsDataset
 from .utils import annotation_conversion, helpers
 
 SEGMENTS_FRONTEND_URL = "https://segments.ai"
+SEGMENTS_METADATA_KEY = "segments_metadata"
 
 
 class TargetSelection(enum.Enum):
@@ -199,55 +196,43 @@ class FetchAnnotations(foo.Operator):
     def resolve_input(self, ctx):
         # TODO: might execute too often, cache API requests?
         inputs = types.Object()
-        choices_dataset = types.Choices()
+        try:
+            run_result = ctx.dataset.load_run_results(
+                SEGMENTS_METADATA_KEY, cache=False
+            )
+        except ValueError:
+            return _no_dset_selected_warning(inputs)
 
-        if not helpers.in_cache(ctx, "segment_datasets_cache"):
-            client = get_client(ctx)
-            datasets = client.get_datasets()
-            filtered_dataset = []
-            for dataset in datasets:
-                if task_type_matches(ctx.dataset.media_type, dataset.task_type):
-                    filtered_dataset.append(
-                        {"full_name": dataset.full_name, "name": dataset.name}
-                    )
-        else:
-            filtered_dataset = helpers.fetch_cache(ctx, "segment_datasets_cache")
+        dataset_name = run_result.dataset_full_name
+        dset = types.Notice(
+            label=f"Fetching annotations from segments.ai dataset: {run_result.dataset_full_name}"
+        )
+        inputs.view("dataset_name", dset)
 
-        helpers.add_cache(inputs, "segment_datasets_cache", filtered_dataset)
-
-        for dataset in filtered_dataset:
-            choices_dataset.add_choice(dataset["full_name"], label=dataset["name"])
+        client = get_client(ctx)
+        releases = client.get_releases(dataset_name)
+        choices_releases = types.Choices()
+        for release in releases:
+            choices_releases.add_choice(release.name, label=release.name)
 
         inputs.enum(
-            "dataset",
-            choices_dataset.values(),
-            view=choices_dataset,
-            label="Dataset",
+            "release",
+            choices_releases.values(),
+            view=choices_releases,
+            label="Release",
             required=True,
         )
-
-        if (dataset := ctx.params.get("dataset", None)) is not None:
-            client = get_client(ctx)
-            releases = client.get_releases(dataset)
-            choices_releases = types.Choices()
-            for release in releases:
-                choices_releases.add_choice(release.name, label=release.name)
-
-            inputs.enum(
-                "release",
-                choices_releases.values(),
-                view=choices_releases,
-                label="Release",
-                required=True,
-            )
 
         return types.Property(inputs)
 
     def execute(self, ctx):
+        run_result = ctx.dataset.load_run_results(SEGMENTS_METADATA_KEY, cache=False)
+        dataset_name = run_result.dataset_full_name
+
         fn_sample_map = helpers.pcd_filename_map(ctx.dataset)
         client = get_client(ctx)
 
-        dataset_sdk = client.get_dataset(ctx.params["dataset"])
+        dataset_sdk = client.get_dataset(dataset_name)
         release = client.get_release(dataset_sdk.full_name, ctx.params["release"])
 
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
@@ -311,12 +296,68 @@ class AddIssue(foo.Operator):
         if not bool(ctx.selected) or len(ctx.selected) > 1:
             warning = types.Warning(label="Please select 1 sample")
             prop = inputs.view("warning", warning)
-            prop.invalid =True
-            return types.Property(inputs, view=types.View(label="Add issue to segments.ai"))
+            prop.invalid = True
+            return types.Property(
+                inputs, view=types.View(label="Add issue to segments.ai")
+            )
 
-        choices_dataset = types.Choices()
+        try:
+            run_result = ctx.dataset.load_run_results(
+                SEGMENTS_METADATA_KEY, cache=False
+            )
+        except ValueError:
+            return _no_dset_selected_warning(inputs)
+
+        dset = types.Notice(
+            label=f"Making issue in segments.ai dataset: {run_result.dataset_full_name}"
+        )
+        inputs.view("dataset_name", dset)
+        inputs.str(
+            "description",
+            allow_empty=False,
+            view=types.TextFieldView(label="Issue description"),
+        )
+        return types.Property(inputs)
+
+    def execute(self, ctx):
+        run_result = ctx.dataset.load_run_results(SEGMENTS_METADATA_KEY, cache=False)
+        dataset_name = run_result.dataset_full_name
 
         client = get_client(ctx)
+        samples = client.get_samples(dataset_name)
+        s_id = ctx.selected[0]
+        selected_sample = ctx.dataset[s_id]
+        samplename = helpers.segments_samplename_from_51(selected_sample)
+        for sample in samples:
+            if sample.name == samplename:
+                break
+        else:
+            raise KeyError(
+                f"Could not find sample with name {samplename} in dataset {ctx.params['dataset']}"
+            )
+
+        uuid = sample.uuid
+        client.add_issue(uuid, ctx.params["description"])
+
+    def resolve_output(self, ctx):
+        pass
+
+
+class SelectDataset(foo.Operator):
+    @property
+    def config(self):
+        return foo.OperatorConfig(
+            name="select_segments_dataset",
+            light_icon="/assets/Black icon.svg",
+            dark_icon="/assets/White icon.svg",
+            label="Select corresponding segments.ai dataset",
+            dynamic=False,
+        )
+
+    def resolve_input(self, ctx):
+        inputs = types.Object()
+        client = get_client(ctx)
+
         datasets = client.get_datasets()
         filtered_dataset = []
         for dataset in datasets:
@@ -325,6 +366,7 @@ class AddIssue(foo.Operator):
                     {"full_name": dataset.full_name, "name": dataset.name}
                 )
 
+        choices_dataset = types.Choices()
         for dataset in filtered_dataset:
             choices_dataset.add_choice(dataset["full_name"], label=dataset["name"])
 
@@ -336,26 +378,21 @@ class AddIssue(foo.Operator):
             required=True,
         )
 
-        inputs.str("description", allow_empty=False, view=types.TextFieldView())
         return types.Property(inputs)
 
     def execute(self, ctx):
-        client = get_client(ctx)
-        samples = client.get_samples(ctx.params["dataset"])
-        s_id = ctx.selected[0]
-        selected_sample = ctx.dataset[s_id]
-        samplename = helpers.segments_samplename_from_51(selected_sample)
-        for sample in samples:
-            if sample.name == samplename:
-                break
-        else:
-            raise KeyError(f"Could not find sample with name {samplename} in dataset {ctx.params['dataset']}")
+        try:
+            config = fo.RunConfig()
+            ctx.dataset.register_run(SEGMENTS_METADATA_KEY, config)
+        except ValueError:
+            # Run config already exists, no operation necessary
+            pass
 
-        uuid = sample.uuid
-        client.add_issue(uuid, ctx.params["description"])
+        results = ctx.dataset.init_run_results(SEGMENTS_METADATA_KEY)
+        results.dataset_full_name = ctx.params["dataset"]
 
-    def resolve_output(self, ctx):
-        pass
+        ctx.dataset.save_run_results(SEGMENTS_METADATA_KEY, results, overwrite=True)
+
 
 def insert_segmentation_labels(
     dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
@@ -513,6 +550,8 @@ def insert_cuboid_labels(
 
 
 _CLIENT = None
+
+
 def get_client(ctx) -> SegmentsClient:
     global _CLIENT
     if _CLIENT is not None:
@@ -573,7 +612,17 @@ def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) 
         raise ValueError(f"Not implemented for media type: {media_type}")
 
 
+def _no_dset_selected_warning(inputs):
+    warning = types.Warning(
+        label="No segments.ai dataset selected. Please select one using the select_segments_dataset operator."
+    )
+    prop = inputs.view("warning", warning)
+    prop.invalid = True
+    return types.Property(inputs, view=types.View(label="No dataset selected"))
+
+
 def register(p):
     p.register(RequestAnnotations)
     p.register(FetchAnnotations)
     p.register(AddIssue)
+    p.register(SelectDataset)

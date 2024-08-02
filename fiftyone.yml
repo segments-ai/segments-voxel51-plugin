@@ -9,6 +9,7 @@ operators:
   - request_annotations
   - fetch_annotations
   - add_issue
+  - select_segments_dataset
 secrets:
  - SEGMENTS_API_KEY
  - SEGMENTS_URL
