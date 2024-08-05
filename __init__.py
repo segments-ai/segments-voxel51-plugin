@@ -616,7 +616,9 @@ def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str,
                     f"Dataset upload not implemented for media type: {dataset.media_type}"
                 )
 
-            segments_sample = client.add_sample(dataset_id, asset.filename, attributes=sample_attrib)
+            segments_sample = client.add_sample(
+                dataset_id, asset.filename, attributes=sample_attrib
+            )
             s["segments_uuid"] = segments_sample.uuid
             s.save()
 
