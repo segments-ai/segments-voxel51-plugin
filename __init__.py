@@ -51,6 +51,8 @@ class DatasetUploadTarget(enum.Enum):
 
 
 class RequestAnnotations(foo.Operator):
+    """This operator uploads samples from fiftyone to Segments.ai. It can setup a new Segments dataset or append data to an existing dataset.
+    """
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -223,6 +225,8 @@ class RequestAnnotations(foo.Operator):
 
 
 class FetchAnnotations(foo.Operator):
+    """Fetches annotations from a Segments.ai release and attaches them to the fiftyone samples.
+    """
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -316,6 +320,8 @@ class FetchAnnotations(foo.Operator):
 
 
 class AddIssue(foo.Operator):
+    """Adds an issue to a Segments.ai sample from within fiftyone.
+    """
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -352,30 +358,19 @@ class AddIssue(foo.Operator):
         return types.Property(inputs)
 
     def execute(self, ctx):
-        run_result = ctx.dataset.load_run_results(SEGMENTS_METADATA_KEY, cache=False)
-        dataset_name = run_result.dataset_full_name
-
-        client = get_client(ctx)
-        samples = client.get_samples(dataset_name)
         s_id = ctx.selected[0]
         selected_sample = ctx.dataset[s_id]
-        samplename = helpers.segments_samplename_from_51(selected_sample)
-        for sample in samples:
-            if sample.name == samplename:
-                break
-        else:
-            raise KeyError(
-                f"Could not find sample with name {samplename} in dataset {ctx.params['dataset']}"
-            )
 
-        uuid = sample.uuid
-        client.add_issue(uuid, ctx.params["description"])
+        client = get_client(ctx)
+        client.add_issue(selected_sample["segments_uuid"], ctx.params["description"])
 
     def resolve_output(self, ctx):
         pass
 
 
 class SelectDataset(foo.Operator):
+    """Select the corresponding Segments.ai dataset for this fiftyone dataset. This is required for other operators that interact with Segments.ai.
+    """
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -578,7 +573,8 @@ def insert_cuboid_labels(
         sample.save()
 
 
-_CLIENT = None
+# Caching the client object, as constructing it is relatively expensive
+_CLIENT: SegmentsClient = None
 
 
 def get_client(ctx) -> SegmentsClient:
@@ -612,6 +608,7 @@ def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str,
             elif dataset.media_type == "point-cloud":
                 sample_attrib = {"pcd": {"url": asset.url, "type": "pcd"}}
             else:
+                # TODO: add support for media type '3d' 
                 raise ValueError(
                     f"Dataset upload not implemented for media type: {dataset.media_type}"
                 )

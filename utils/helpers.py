@@ -53,6 +53,7 @@ def pcd_filename_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
 
 
 def create_uuid_sample_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
+    """Creates a dictionary mapping a Segments uuid string to a fiftyone sample."""
     map_ = {}
     for sample in dataset:
         uuid = sample["segments_uuid"]
@@ -60,14 +61,3 @@ def create_uuid_sample_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
             map_[uuid] = sample
 
     return map_
-
-
-def segments_samplename_from_51(sample51: fo.Sample) -> str:
-    has_key = (
-        "segments_pc_filename" in sample51
-        and sample51["segments_pc_filename"] is not None
-    )
-    if has_key:
-        return sample51["segments_pc_filename"]
-    else:
-        return Path(sample51.filepath).name
