@@ -67,31 +67,35 @@ class RequestAnnotations(foo.Operator):
     def target_data_selector(ctx, inputs):
         has_selected = bool(ctx.selected)
         has_view = ctx.view != ctx.dataset.view()
+        default_choice = "full_dataset"
+
         target_choices = types.RadioGroup(orientation="horizontal")
         target_choices.add_choice(
             TargetSelection.DATASET.value,
             label="Entire dataset",
             description="Upload the entire dataset",
         )
-        if has_selected:
-            target_choices.add_choice(
-                TargetSelection.SELECTED.value,
-                label="Selected samples",
-                description="Upload only the selected samples.",
-            )
         if has_view:
             target_choices.add_choice(
                 TargetSelection.CURRENT_VIEW.value,
                 label="Current view",
                 description="Upload only the current view",
             )
+            default_choice = TargetSelection.CURRENT_VIEW.value
+        if has_selected:
+            target_choices.add_choice(
+                TargetSelection.SELECTED.value,
+                label="Selected samples",
+                description="Upload only the selected samples.",
+            )
+            default_choice = TargetSelection.SELECTED.value
         inputs.enum(
             "target",
             target_choices.values(),
             required=True,
             label="Target",
             view=target_choices,
-            default="full_dataset",
+            default=default_choice,
         )
 
     @staticmethod
