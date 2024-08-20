@@ -574,7 +574,7 @@ def insert_cuboid_labels(
 
 
 # Caching the client object, as constructing it is relatively expensive
-_CLIENT: SegmentsClient = None
+_CLIENT: Optional[SegmentsClient] = None
 
 
 def get_client(ctx) -> SegmentsClient:
