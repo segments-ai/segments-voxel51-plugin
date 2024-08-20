@@ -268,10 +268,10 @@ class FetchAnnotations(foo.Operator):
         run_result = ctx.dataset.load_run_results(SEGMENTS_METADATA_KEY, cache=False)
         dataset_name = run_result.dataset_full_name
 
-        uuid_sample_map = helpers.create_uuid_sample_map(ctx.dataset)
         client = get_client(ctx)
 
         dataset_sdk = client.get_dataset(dataset_name)
+        uuid_sample_map = helpers.create_uuid_sample_map(ctx.dataset, client, dataset_sdk)
         release = client.get_release(dataset_sdk.full_name, ctx.params["release"])
 
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)

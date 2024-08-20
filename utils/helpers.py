@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import fiftyone as fo
 import fiftyone.operators.types as types
+import segments
 
 
 @dataclass
@@ -52,7 +53,35 @@ def pcd_filename_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
             )
 
 
-def create_uuid_sample_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
+def create_uuid_sample_map(
+    dataset: fo.Dataset,
+    client: segments.SegmentsClient,
+    segments_dataset: segments.typing.Dataset,
+) -> dict[str, fo.Sample]:
+    """Creates a dictionary mapping a Segments uuid string to a fiftyone sample."""
+    map_ = create_uuid_sample_map_local(dataset)
+    reversed_maps = {value.id: key for (key, value) in map_.items()}
+
+    segments_samples = None
+
+    for sample in dataset:
+        if sample.id in reversed_maps:
+            # Already matched
+            continue
+
+        if segments_samples is None:
+            # Lazily fetch the samples
+            segments_samples = client.get_samples(segments_dataset.full_name)
+            sample_name_to_id = {s.name: s.uuid for s in segments_samples}
+
+        fo_name = Path(sample.filepath).name
+        if fo_name in sample_name_to_id:
+            map_[sample_name_to_id[fo_name]] = sample
+
+    return map_
+
+
+def create_uuid_sample_map_local(dataset: fo.Dataset) -> dict[str, fo.Sample]:
     """Creates a dictionary mapping a Segments uuid string to a fiftyone sample."""
     map_ = {}
     for sample in dataset:
