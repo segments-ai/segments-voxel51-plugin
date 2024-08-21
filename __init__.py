@@ -290,11 +290,6 @@ class FetchAnnotations(foo.Operator):
         else:
             dataloader = SegmentsDataset(release, preload=False)
 
-            # Ugly hack to make sure SegmentsDataset does not fetch all image files.
-            # for sample in dataloader.samples:
-            #     image_info = sample["attributes"]["image"]
-            #     image_info["url"] = image_info["url"].replace("https", "s3")
-
             if dataset_type in (
                 SegmentsDatasetType.SEGMENTATION_BITMAP,
                 SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES,
