@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
-import numpy as np
 import fiftyone as fo
+import numpy as np
 import segments
 
 
@@ -65,3 +66,14 @@ def create_uuid_sample_map_local(dataset: fo.Dataset) -> dict[str, fo.Sample]:
             map_[uuid] = sample
 
     return map_
+
+
+def is_cloud_storage(path) -> bool:
+    parse_result = urlparse(path)
+    if parse_result.scheme == "":
+        # no parsed scheme, assume local file
+        return False
+    else:
+        # If scheme provided, assume cloud storage
+        # TODO: Check for supported schemes
+        return True

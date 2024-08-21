@@ -3,9 +3,9 @@ Operators for integrating with segments.ai
 """
 
 import enum
-from typing import Optional, Union
 import urllib.parse
 from pathlib import Path
+from typing import Optional, Union
 
 import fiftyone as fo
 import fiftyone.operators as foo
@@ -51,8 +51,8 @@ class DatasetUploadTarget(enum.Enum):
 
 
 class RequestAnnotations(foo.Operator):
-    """This operator uploads samples from fiftyone to Segments.ai. It can setup a new Segments dataset or append data to an existing dataset.
-    """
+    """This operator uploads samples from fiftyone to Segments.ai. It can setup a new Segments dataset or append data to an existing dataset."""
+
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -229,8 +229,8 @@ class RequestAnnotations(foo.Operator):
 
 
 class FetchAnnotations(foo.Operator):
-    """Fetches annotations from a Segments.ai release and attaches them to the fiftyone samples.
-    """
+    """Fetches annotations from a Segments.ai release and attaches them to the fiftyone samples."""
+
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -275,7 +275,9 @@ class FetchAnnotations(foo.Operator):
         client = get_client(ctx)
 
         dataset_sdk = client.get_dataset(dataset_name)
-        uuid_sample_map = helpers.create_uuid_sample_map(ctx.dataset, client, dataset_sdk)
+        uuid_sample_map = helpers.create_uuid_sample_map(
+            ctx.dataset, client, dataset_sdk
+        )
         release = client.get_release(dataset_sdk.full_name, ctx.params["release"])
 
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
@@ -324,8 +326,8 @@ class FetchAnnotations(foo.Operator):
 
 
 class AddIssue(foo.Operator):
-    """Adds an issue to a Segments.ai sample from within fiftyone.
-    """
+    """Adds an issue to a Segments.ai sample from within fiftyone."""
+
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -373,8 +375,8 @@ class AddIssue(foo.Operator):
 
 
 class SelectDataset(foo.Operator):
-    """Select the corresponding Segments.ai dataset for this fiftyone dataset. This is required for other operators that interact with Segments.ai.
-    """
+    """Select the corresponding Segments.ai dataset for this fiftyone dataset. This is required for other operators that interact with Segments.ai."""
+
     @property
     def config(self):
         return foo.OperatorConfig(
@@ -604,24 +606,31 @@ def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str,
             (idx + 1) / len(dataset), label=f"Uploading {idx+1}/(len(dataset))"
         )
 
-        with open(s.filepath, "rb") as f:
-            asset = client.upload_asset(f, Path(s.filepath).name)
+        # If the sample is stored in a cloud bucket, don't upload it to segments.ai. Instead, use the URL directly.
+        if helpers.is_cloud_storage(s.filepath):
+            url = s.filepath
+            filename = url.rsplit("/", 1)[-1]
+        else:
+            with open(s.filepath, "rb") as f:
+                asset = client.upload_asset(f, Path(s.filepath).name)
+                url = asset.url
+                filename = asset.filename
 
-            if dataset.media_type == "image":
-                sample_attrib = {"image": {"url": asset.url}}
-            elif dataset.media_type == "point-cloud":
-                sample_attrib = {"pcd": {"url": asset.url, "type": "pcd"}}
-            else:
-                # TODO: add support for media type '3d' 
-                raise ValueError(
-                    f"Dataset upload not implemented for media type: {dataset.media_type}"
-                )
-
-            segments_sample = client.add_sample(
-                dataset_id, asset.filename, attributes=sample_attrib
+        if dataset.media_type == "image":
+            sample_attrib = {"image": {"url": url}}
+        elif dataset.media_type == "point-cloud":
+            sample_attrib = {"pcd": {"url": url, "type": "pcd"}}
+        else:
+            # TODO: add support for media type '3d'
+            raise ValueError(
+                f"Dataset upload not implemented for media type: {dataset.media_type}"
             )
-            s["segments_uuid"] = segments_sample.uuid
-            s.save()
+
+        segments_sample = client.add_sample(
+            dataset_id, filename, attributes=sample_attrib
+        )
+        s["segments_uuid"] = segments_sample.uuid
+        s.save()
 
 
 def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) -> bool:
