@@ -7,6 +7,9 @@
 # Segments.ai Voxel51 Plugin
 
 A plugin for Voxel51, integrating it with the annotation platform [Segments.ai](https://segments.ai)
+## Demo video
+
+https://github.com/user-attachments/assets/30831626-da06-47b9-b290-5996db8b4597
 
 # Setup
 ## Plugin installation
