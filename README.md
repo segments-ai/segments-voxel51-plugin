@@ -9,7 +9,7 @@
 A plugin for Voxel51, integrating it with the annotation platform [Segments.ai](https://segments.ai)
 ## Demo video
 
-https://github.com/user-attachments/assets/30831626-da06-47b9-b290-5996db8b4597
+https://github.com/user-attachments/assets/6580e39d-8a4f-4d2f-bf4e-f434110dcd65
 
 # Setup
 ## Plugin installation
