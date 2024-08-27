@@ -3,9 +3,10 @@ Operators for integrating with segments.ai
 """
 
 import enum
-import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
+from urllib.parse import urlparse, urljoin
 
 import fiftyone as fo
 import fiftyone.operators as foo
@@ -15,8 +16,6 @@ import requests
 import segments
 import segments.typing
 from segments import SegmentsClient, SegmentsDataset
-
-from .utils import annotation_conversion, helpers
 
 SEGMENTS_FRONTEND_URL = "https://segments.ai"
 SEGMENTS_METADATA_KEY = "segments_metadata"
@@ -160,7 +159,7 @@ class RequestAnnotations(foo.Operator):
 
         upload_dataset(client, dataset_view, dataset.full_name, ctx)
 
-        url = urllib.parse.urljoin(SEGMENTS_FRONTEND_URL, dataset.full_name)
+        url = urljoin(SEGMENTS_FRONTEND_URL, dataset.full_name)
         return {"segments_dataset": dataset.full_name, "url": url}
 
     def target_dataset_view(self, ctx):
@@ -275,9 +274,7 @@ class FetchAnnotations(foo.Operator):
         client = get_client(ctx)
 
         dataset_sdk = client.get_dataset(dataset_name)
-        uuid_sample_map = helpers.create_uuid_sample_map(
-            ctx.dataset, client, dataset_sdk
-        )
+        uuid_sample_map = create_uuid_sample_map(ctx.dataset, client, dataset_sdk)
         release = client.get_release(dataset_sdk.full_name, ctx.params["release"])
 
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
@@ -422,6 +419,81 @@ class SelectDataset(foo.Operator):
         ctx.dataset.save_run_results(SEGMENTS_METADATA_KEY, results, overwrite=True)
 
 
+## Helper functions
+
+
+@dataclass
+class Point3D:
+    x: float
+    y: float
+    z: float
+
+    def array(self):
+        return np.array((self.x, self.y, self.z))
+
+
+def pcd_filename_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
+    if dataset.media_type != "3d":
+        return {Path(s.filepath).name: s for s in dataset}
+    else:
+        try:
+            return {s["segments_pc_filename"]: s for s in dataset}
+        except KeyError:
+            raise KeyError(
+                "Expected to find 'source_pcd_filename' attribute in sample. This is required to match segments.ai annotations with fiftyone samples."
+            )
+
+
+def create_uuid_sample_map(
+    dataset: fo.Dataset,
+    client: segments.SegmentsClient,
+    segments_dataset: segments.typing.Dataset,
+) -> dict[str, fo.Sample]:
+    """Creates a dictionary mapping a Segments uuid string to a fiftyone sample."""
+    map_ = create_uuid_sample_map_local(dataset)
+    reversed_maps = {value.id: key for (key, value) in map_.items()}
+
+    segments_samples = None
+
+    for sample in dataset:
+        if sample.id in reversed_maps:
+            # Already matched
+            continue
+
+        if segments_samples is None:
+            # Lazily fetch the samples
+            segments_samples = client.get_samples(segments_dataset.full_name)
+            sample_name_to_id = {s.name: s.uuid for s in segments_samples}
+
+        fo_name = Path(sample.filepath).name
+        if fo_name in sample_name_to_id:
+            map_[sample_name_to_id[fo_name]] = sample
+
+    return map_
+
+
+def create_uuid_sample_map_local(dataset: fo.Dataset) -> dict[str, fo.Sample]:
+    """Creates a dictionary mapping a Segments uuid string to a fiftyone sample."""
+    map_ = {}
+    for sample in dataset:
+        uuid = sample["segments_uuid"]
+        if uuid is not None:
+            map_[uuid] = sample
+
+    return map_
+
+
+def is_cloud_storage(path) -> bool:
+    parse_result = urlparse(path)
+    if parse_result.scheme == "":
+        # no parsed scheme, assume local file
+        return False
+    else:
+        # If scheme provided, assume cloud storage
+        # TODO: Check for supported schemes
+        return True
+
+
 def insert_segmentation_labels(
     dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
 ):
@@ -473,24 +545,20 @@ def insert_vector_labels(
         for instance in annotation["annotations"]:
             category_name = id_cat_map[instance["category_id"]]
             if instance["type"] == "bbox":
-                detection = annotation_conversion.create_51_bbox(
-                    instance, image_size, category_name
-                )
+                detection = create_51_bbox(instance, image_size, category_name)
                 detections.append(detection)
             elif instance["type"] == "polygon":
-                polygon = annotation_conversion.create_51_polyline(
+                polygon = create_51_polyline(
                     instance, image_size, category_name, is_polygon=True
                 )
                 polygons.append(polygon)
             elif instance["type"] == "polyline":
-                polyline = annotation_conversion.create_51_polyline(
+                polyline = create_51_polyline(
                     instance, image_size, category_name, is_polygon=False
                 )
                 polylines.append(polyline)
             elif instance["type"] == "point":
-                keypoint = annotation_conversion.create_51_keypoint(
-                    instance, image_size, category_name
-                )
+                keypoint = create_51_keypoint(instance, image_size, category_name)
                 keypoints.append(keypoint)
             else:
                 raise ValueError(f"Could not parse annotation type: {instance['type']}")
@@ -541,15 +609,15 @@ def insert_cuboid_labels(
             type_ = instance["type"]
 
             if type_ == "cuboid":
-                cuboid = annotation_conversion.create_51_cuboid(instance, category_name)
+                cuboid = create_51_cuboid(instance, category_name)
                 cuboids.append(cuboid)
             elif type_ == "polygon":
-                polygon = annotation_conversion.create_51_3dpolygon(
+                polygon = create_51_3dpolygon(
                     instance, category_name, is_polygon=True
                 )
                 polygons.append(polygon)
             elif type_ == "polyline":
-                polyline = annotation_conversion.create_51_3dpolygon(
+                polyline = create_51_3dpolygon(
                     instance, category_name, is_polygon=False
                 )
                 polylines.append(polyline)
@@ -602,7 +670,7 @@ def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str,
         )
 
         # If the sample is stored in a cloud bucket, don't upload it to segments.ai. Instead, use the URL directly.
-        if helpers.is_cloud_storage(s.filepath):
+        if is_cloud_storage(s.filepath):
             url = s.filepath
             filename = url.rsplit("/", 1)[-1]
         else:
@@ -665,6 +733,73 @@ def _fetch_selected_dataset_name(ctx) -> Optional[str]:
         return run_result.dataset_full_name
     except ValueError:
         return None
+
+
+def create_51_cuboid(instance: dict, category_name: str):
+    position = Point3D(**instance["position"]).array().tolist()
+    dims = Point3D(**instance["dimensions"]).array().tolist()
+
+    detection = fo.Detection(
+        label=category_name,
+        location=position,
+        dimensions=dims,
+        rotation=[0, 0, instance["yaw"]],
+    )
+
+    return detection
+
+
+def create_51_bbox(
+    instance: dict, image_size: np.ndarray, category_name: str
+) -> fo.Detection:
+    points = np.array(instance["points"])
+    points = points / image_size[None, :]
+    width = points[1, 0] - points[0, 0]
+    height = points[1, 1] - points[0, 1]
+    detection = fo.Detection(
+        bounding_box=[points[0, 0], points[0, 1], width, height], label=category_name
+    )
+
+    return detection
+
+
+def create_51_polyline(
+    instance: dict,
+    image_size: np.ndarray,
+    category_name: str,
+    is_polygon: bool,
+) -> fo.Polyline:
+    points = np.asarray(instance["points"])
+    points = points / image_size[None, :]
+
+    polygon = fo.Polyline(
+        label=category_name,
+        points=[points.tolist()],
+        closed=is_polygon,
+        filled=is_polygon,
+    )
+    return polygon
+
+
+def create_51_keypoint(
+    instance: dict, image_size: np.ndarray, category_name: str
+) -> fo.Keypoint:
+    points = np.asarray(instance["points"])
+    points = points / image_size[None, :]
+
+    point = fo.Keypoint(points=points.tolist(), label=category_name)
+    return point
+
+
+def create_51_3dpolygon(
+    instance: dict, category_name: str, is_polygon: bool
+) -> fo.Polyline:
+    points = np.array(instance["points"])
+    if is_polygon:
+        points = np.concatenate((points, points[0:1, :]), axis=0)
+
+    line = fo.Polyline(label=category_name, points3d=[points.tolist()])
+    return line
 
 
 def register(p):
