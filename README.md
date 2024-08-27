@@ -6,7 +6,7 @@
 
 # Segments.ai Voxel51 Plugin
 
-A plugin for Voxel51, integrating it with the annotation platform [Segments.ai](https://segments.ai)
+A plugin for [Voxel51](https://voxel51.com/), integrating it with the annotation platform [Segments.ai](https://segments.ai)
 ## Demo video
 
 https://github.com/user-attachments/assets/6580e39d-8a4f-4d2f-bf4e-f434110dcd65
@@ -15,7 +15,7 @@ https://github.com/user-attachments/assets/6580e39d-8a4f-4d2f-bf4e-f434110dcd65
 ## Plugin installation
 
 ```bash
-fiftyone plugins download https://github.com/segments-ai/voxel51-plugin
+fiftyone plugins download https://github.com/segments-ai/segments-voxel51-plugin
 ```
 
 ## Configuration
