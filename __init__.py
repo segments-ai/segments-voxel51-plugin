@@ -393,7 +393,7 @@ class SelectDataset(foo.Operator):
 
         choices_dataset = types.Choices()
         for dataset in filtered_dataset:
-            choices_dataset.add_choice(dataset["full_name"], label=dataset["name"])
+            choices_dataset.add_choice(dataset["full_name"], label=dataset["full_name"])
 
         inputs.enum(
             "dataset",
