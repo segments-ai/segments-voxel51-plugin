@@ -498,7 +498,7 @@ def insert_segmentation_labels(
     dataloader: SegmentsDataset, dataset: fo.Dataset, sample_map: dict[str, fo.Sample]
 ):
     catmap = {x.id: x.name for x in dataloader.categories}
-    dataset.mask_targets["ground_truth"] = catmap
+    dataset.mask_targets["ground_truth_segmentation"] = catmap
     dataset.save()
     annotation_count = 0
     for annotation in dataloader:
@@ -516,7 +516,7 @@ def insert_segmentation_labels(
         segmap = id_id_func(segmap_instance)
 
         label = fo.Segmentation(mask=segmap)
-        sample.add_labels(label, label_field="ground_truth")
+        sample.add_labels(label, label_field="ground_truth_segmentation")
         sample.save()
         annotation_count += 1
 
