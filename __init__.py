@@ -326,7 +326,7 @@ class AddIssue(foo.Operator):
             name="add_issue",
             light_icon="/assets/Black icon.svg",
             dark_icon="/assets/White icon.svg",
-            label="Add issue to segments.ai sample",
+            label="Add issue to Segments.ai sample",
             dynamic=False,
         )
 
@@ -375,7 +375,7 @@ class SelectDataset(foo.Operator):
             name="select_segments_dataset",
             light_icon="/assets/Black icon.svg",
             dark_icon="/assets/White icon.svg",
-            label="Select corresponding segments.ai dataset",
+            label="Select corresponding Segments.ai dataset",
             dynamic=False,
         )
 
