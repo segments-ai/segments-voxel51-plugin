@@ -23,7 +23,7 @@ fiftyone plugins download https://github.com/segments-ai/segments-voxel51-plugin
 To use this plugin, you need to provide your Segments.ai API key. This is done by setting it as an environment variable before launching the app:
 ```bash
 export SEGMENTS_API_KEY=<YOUR API KEY HERE>
-fiftyone launch app
+fiftyone app launch
 ```
 
 # Dataset type compatibility
