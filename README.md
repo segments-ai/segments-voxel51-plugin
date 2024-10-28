@@ -64,10 +64,19 @@ When pulling labels from Segments.ai, the operator will match fiftyone samples w
 ```python
 import fiftyone as fo
 dataset = fo.load_dataset("your_dataset")
-for sample in dataset:
+for sample in dataset.iter_samples(autosave=True,progress=True):
     # Somehow match the fo.Sample with the segments.ai sample
     sample["segments_uuid"] = "<UUID OF YOUR SAMPLE HERE>"
-    sample.save()
+```
+
+Alternatively, this example uses FiftyOne's [set_values()][] method to perform a bulk update:
+
+[set_values()]: https://docs.voxel51.com/api/fiftyone.core.dataset.html?highlight=set_values#fiftyone.core.dataset.Dataset.set_values
+
+```python
+import fiftyone as fo
+dataset = fo.load_dataset("your_dataset")
+dataset.set_values("segments_uuid",your_values_map,key_field=your_key)
 ```
 
 Current limitations:
