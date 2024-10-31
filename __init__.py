@@ -322,6 +322,11 @@ class FetchAnnotations(foo.Operator):
             response.raise_for_status()
             releasefile = response.json()
             insert_cuboid_labels(releasefile, ctx.dataset, uuid_sample_map)
+        elif dataset_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
+            response = requests.get(release.attributes.url)
+            response.raise_for_status()
+            releasefile = response.json()
+            insert_multisensor_labels(releasefile, ctx.dataset, uuid_sample_map)
         else:
             dataloader = SegmentsDataset(release, preload=False)
 
@@ -680,6 +685,16 @@ def insert_cuboid_labels(
         sample.save()
 
 
+def insert_multisensor_labels(
+    dataloader: dict,
+    dataset: fo.Dataset,
+    sample_map: dict[str, fo.Sample],
+):
+    categories = dataloader["dataset"]["task_attributes"]["categories"]
+    id_cat_map = {x["id"]: x["name"] for x in categories}
+    iterable = dataloader["dataset"]["samples"]
+
+
 # Caching the client object, as constructing it is relatively expensive
 _CLIENT: Optional[SegmentsClient] = None
 
@@ -726,13 +741,13 @@ def upload_dataset(
         segments_sample = client.add_sample(
             dataset_id, sample_name, attributes=sample_attrib
         )
-        if task_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE: 
+        if task_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
             # For each of the samples, record uuid, frame index and sensor name
             for groupname in s.group_slices:
                 s.group_slice = groupname
-                s.set_values("segments_uuid", [segments_sample.uuid]*len(s))
+                s.set_values("segments_uuid", [segments_sample.uuid] * len(s))
                 s.set_values("segments_frame_idx", range(len(s)))
-                s.set_values("segments_sensor_name", [groupname]*len(s))
+                s.set_values("segments_sensor_name", [groupname] * len(s))
         else:
             s["segments_uuid"] = segments_sample.uuid
             s.save()
