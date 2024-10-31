@@ -2,10 +2,11 @@
 Operators for integrating with segments.ai
 """
 
+from collections import namedtuple
 import enum
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, urljoin
 
 import fiftyone as fo
@@ -42,6 +43,23 @@ class SegmentsDatasetType(enum.Enum):
     # POINTCLOUD_CUBOID_SEQUENCE = "pointcloud-cuboid-sequence"
     # POINTCLOUD_SEGMENTATION_SEQUENCE = "pointcloud-segmentation-sequence"
     # POINTCLOUD_VECTOR_SEQUENCE = "pointcloud-vector-sequence"
+    MULTISENSOR_SEQUENCE = "multisensor-sequence"
+
+IMAGE_TASKS = {
+    segments.typing.TaskType.SEGMENTATION_BITMAP,
+    segments.typing.TaskType.SEGMENTATION_BITMAP_HIGHRES,
+    segments.typing.TaskType.IMAGE_SEGMENTATION_SEQUENCE,
+    segments.typing.TaskType.BBOXES,
+    segments.typing.TaskType.VECTOR,
+    segments.typing.TaskType.IMAGE_VECTOR_SEQUENCE,
+    segments.typing.TaskType.KEYPOINTS,
+}
+
+POINTCLOUD_TASKS = {
+    segments.typing.TaskType.POINTCLOUD_CUBOID,
+    segments.typing.TaskType.POINTCLOUD_SEGMENTATION,
+    segments.typing.TaskType.POINTCLOUD_VECTOR,
+}
 
 
 class DatasetUploadTarget(enum.Enum):
@@ -107,9 +125,6 @@ class RequestAnnotations(foo.Operator):
                 SegmentsDatasetType.VECTOR: "Vector",
                 SegmentsDatasetType.KEYPOINTS: "Keypoints",
             }
-            data_choices = types.Dropdown()
-            for datatype in labelmap.keys():
-                data_choices.add_choice(datatype.value, label=labelmap[datatype])
 
             default_selection = SegmentsDatasetType.SEGMENTATION_BITMAP.value
 
@@ -119,13 +134,19 @@ class RequestAnnotations(foo.Operator):
                 SegmentsDatasetType.POINTCLOUD_VECTOR: "Pointcloud vector",
                 SegmentsDatasetType.POINTCLOUD_SEGMENTATION: "Pointcloud segmentation",
             }
-            data_choices = types.Dropdown()
-            for datatype in labelmap.keys():
-                data_choices.add_choice(datatype.value, label=labelmap[datatype])
 
             default_selection = SegmentsDatasetType.POINTCLOUD_CUBOID.value
+        elif media_type == "group":
+            labelmap = {
+                SegmentsDatasetType.MULTISENSOR_SEQUENCE: "Multisensor sequence"
+            }
+            default_selection = SegmentsDatasetType.MULTISENSOR_SEQUENCE.value
         else:
             raise ValueError(f"Not implemented for media type: {media_type}")
+
+        data_choices = types.Dropdown()
+        for datatype in labelmap.keys():
+            data_choices.add_choice(datatype.value, label=labelmap[datatype])
 
         inputs.enum(
             "dataset_type",
@@ -157,7 +178,8 @@ class RequestAnnotations(foo.Operator):
             dataset_name = _fetch_selected_dataset_name(ctx)
             dataset = client.get_dataset(dataset_name)
 
-        upload_dataset(client, dataset_view, dataset.full_name, ctx)
+        task_type = SegmentsDatasetType(dataset.task_type)
+        upload_dataset(client, dataset_view, dataset.full_name, task_type, ctx)
 
         url = urljoin(SEGMENTS_FRONTEND_URL, dataset.full_name)
         return {"segments_dataset": dataset.full_name, "url": url}
@@ -612,9 +634,7 @@ def insert_cuboid_labels(
                 cuboid = create_51_cuboid(instance, category_name)
                 cuboids.append(cuboid)
             elif type_ == "polygon":
-                polygon = create_51_3dpolygon(
-                    instance, category_name, is_polygon=True
-                )
+                polygon = create_51_3dpolygon(instance, category_name, is_polygon=True)
                 polygons.append(polygon)
             elif type_ == "polyline":
                 polyline = create_51_3dpolygon(
@@ -663,57 +683,152 @@ def get_client(ctx) -> SegmentsClient:
     return client
 
 
-def upload_dataset(client: SegmentsClient, dataset: fo.Dataset, dataset_id: str, ctx):
-    for idx, s in enumerate(dataset):
+def upload_dataset(
+    client: SegmentsClient,
+    dataset: fo.Dataset,
+    dataset_id: str,
+    task_type: SegmentsDatasetType,
+    ctx,
+):
+    if dataset.media_type == "group":
+        dataset_iterator = dataset.iter_dynamic_groups()
+    else:
+        dataset_iterator = dataset
+
+    for idx, s in enumerate(dataset_iterator):
         ctx.set_progress(
             (idx + 1) / len(dataset), label=f"Uploading {idx+1}/(len(dataset))"
         )
 
         # If the sample is stored in a cloud bucket, don't upload it to segments.ai. Instead, use the URL directly.
-        if is_cloud_storage(s.filepath):
-            url = s.filepath
+        asset_info = upload_sample(client, s)
+
+        sample_attrib, sample_name = generate_sample_attribs(s, asset_info, task_type)
+
+        segments_sample = client.add_sample(
+            dataset_id, sample_name, attributes=sample_attrib
+        )
+        # TODO: record segments info somewhere
+        # s["segments_uuid"] = segments_sample.uuid
+        # s.save()
+
+
+AssetInfo = namedtuple("AssetInfo", "url filename")
+
+
+def upload_sample(
+    client: segments.SegmentsClient, s: Union[fo.Sample, fo.DatasetView]
+) -> List[Dict[str, AssetInfo]]:
+    def upload_media_sample(sample):
+        if is_cloud_storage(sample.filepath):
+            url = sample.filepath
             filename = url.rsplit("/", 1)[-1]
         else:
-            with open(s.filepath, "rb") as f:
-                asset = client.upload_asset(f, Path(s.filepath).name)
+            with open(sample.filepath, "rb") as f:
+                asset = client.upload_asset(f, Path(sample.filepath).name)
                 url = asset.url
                 filename = asset.filename
 
-        if dataset.media_type == "image":
-            sample_attrib = {"image": {"url": url}}
-        elif dataset.media_type == "point-cloud":
-            sample_attrib = {"pcd": {"url": url, "type": "pcd"}}
-        else:
-            # TODO: add support for media type '3d'
-            raise ValueError(
-                f"Dataset upload not implemented for media type: {dataset.media_type}"
-            )
+        return AssetInfo(url, filename)
 
-        segments_sample = client.add_sample(
-            dataset_id, filename, attributes=sample_attrib
+    if isinstance(s, fo.DatasetView):
+        asset_infos = []
+        for sensors in s.iter_groups():
+            asset_info = {}
+            for key, sample in sensors.items():
+                asset_info[key] = upload_media_sample(sample)
+            asset_infos.append(asset_info)
+    else:
+        url, filename = upload_media_sample(s)
+        asset_info = {"sample": (url, filename)}
+        asset_infos = [asset_info]
+
+    return asset_infos
+
+
+def generate_sample_attribs(sample_info: Union[fo.DatasetView, fo.Sample], asset_infos: List[Dict[str, AssetInfo]], task_type: SegmentsDatasetType):
+    if task_type in IMAGE_TASKS:
+        asset_info = asset_infos[0]["sample"]
+        sample_attrib = {"image": {"url": asset_info.url}}
+        sample_name = asset_info.filename
+    elif task_type in POINTCLOUD_TASKS:
+        asset_info = asset_infos[0]["sample"]
+        sample_attrib = {"pcd": {"url": asset_info.url, "type": "pcd"}}
+        sample_name = asset_info.filename
+    elif task_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
+        sensors = []
+        sensors.append(_generate_attrib_frames_lidar(sample_info, asset_infos))
+
+        sample_attrib = {
+            "sensors": sensors
+        }
+        sample_name = "tmp"
+    else:
+        # TODO: add support for media type '3d'
+        raise ValueError(
+            f"Dataset upload not implemented for media type: {task_type}"
         )
-        s["segments_uuid"] = segments_sample.uuid
-        s.save()
+
+    return sample_attrib, sample_name
+
+
+def _generate_attrib_frames_lidar(sample_info: fo.DatasetView, asset_infos: List[Dict[str, AssetInfo]]):
+    sensors = next(sample_info.iter_groups())
+    for sensor_name, sensor_sample in sensors.items():
+        if sensor_sample.media_type == "point-cloud":
+            break
+    else:
+        raise ValueError("Could not find a pointcloud slice")
+
+    pc_name = sensor_name
+
+    sensor_attribs = {
+        "name": pc_name,
+        "task_type": "pointcloud-cuboid-sequence"
+    }
+    frames = []
+    for sensors, asset_info in zip(sample_info.iter_groups(), asset_infos):
+        lidar_sample = sensors[pc_name]
+
+        frame = {}
+        frame["name"] = Path(asset_info[pc_name].filename).name
+        frame["pcd"] = {
+            "url": asset_info[pc_name].url,
+            "type": "pcd"
+        }
+        frame["ego_pose"] = {
+            "position": {
+                "x": lidar_sample.metadata.position["x"],
+                "y": lidar_sample.metadata.position["y"],
+                "z": lidar_sample.metadata.position["z"],
+            },
+            "heading": {
+                "qw": lidar_sample.metadata.heading["qw"],
+                "qx": lidar_sample.metadata.heading["qx"],
+                "qy": lidar_sample.metadata.heading["qy"],
+                "qz": lidar_sample.metadata.heading["qz"],
+            }
+        }
+
+        frames.append(frame)
+
+    sensor_attribs["attributes"] = {"frames": frames}
+
+    return sensor_attribs
+
+
+
+    
 
 
 def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) -> bool:
     if media_type == "image":
-        return seg_task_type in (
-            segments.typing.TaskType.SEGMENTATION_BITMAP,
-            segments.typing.TaskType.SEGMENTATION_BITMAP_HIGHRES,
-            segments.typing.TaskType.IMAGE_SEGMENTATION_SEQUENCE,
-            segments.typing.TaskType.BBOXES,
-            segments.typing.TaskType.VECTOR,
-            segments.typing.TaskType.IMAGE_VECTOR_SEQUENCE,
-            segments.typing.TaskType.KEYPOINTS,
-        )
+        return seg_task_type in IMAGE_TASKS
 
     elif media_type == "point-cloud" or media_type == "3d":
-        return seg_task_type in (
-            segments.typing.TaskType.POINTCLOUD_CUBOID,
-            segments.typing.TaskType.POINTCLOUD_SEGMENTATION,
-            segments.typing.TaskType.POINTCLOUD_VECTOR,
-        )
+        return seg_task_type in POINTCLOUD_TASKS
+    elif media_type == "group":
+        return seg_task_type in (segments.typing.TaskType.MULTISENSOR_SEQUENCE,)
     else:
         raise ValueError(f"Not implemented for media type: {media_type}")
 
