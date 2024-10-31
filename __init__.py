@@ -807,6 +807,27 @@ def _generate_attrib_frames_lidar(
             },
         }
 
+        images = []
+        for sensor_name, sensor_sample in sensors.items():
+            if sensor_sample.media_type != "image":
+                continue
+        
+            image_info = {
+                "name": sensor_name,
+                "url": asset_info[sensor_name].url,
+            }
+            if sensor_sample.metadata is not None:
+                # TODO: add extrinsics
+                intrinsics = np.array(sensor_sample.metadata.K).reshape(3,3)
+
+                image_info["intrinsics"] = {
+                    "intrinsic_matrix": intrinsics.tolist()
+                }
+
+            images.append(image_info)
+
+        frame["images"] = images
+
         frames.append(frame)
 
     sensor_attribs["attributes"] = {"frames": frames}
