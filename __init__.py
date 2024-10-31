@@ -765,7 +765,8 @@ def generate_sample_attribs(
         sensors.append(_generate_attrib_frames_lidar(sample_info, asset_infos))
 
         sample_attrib = {"sensors": sensors}
-        sample_name = "tmp"
+        # TODO: Provide a way to customize the sample names
+        sample_name = sample_info.first().id
     else:
         # TODO: add support for media type '3d'
         raise ValueError(f"Dataset upload not implemented for media type: {task_type}")
