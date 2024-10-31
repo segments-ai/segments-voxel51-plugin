@@ -176,7 +176,7 @@ class RequestAnnotations(foo.Operator):
                 task_attributes=attributes,
             )
         elif data_upload_target == DatasetUploadTarget.APPEND:
-            dataset_name = _fetch_selected_dataset_name(ctx)
+            dataset_name, _ = _fetch_selected_dataset_name(ctx)
             dataset = client.get_dataset(dataset_name)
 
         task_type = SegmentsDatasetType(dataset.task_type)
@@ -198,7 +198,7 @@ class RequestAnnotations(foo.Operator):
 
     def resolve_input(self, ctx):
         inputs = types.Object()
-        dataset_name = _fetch_selected_dataset_name(ctx)
+        dataset_name, dataset_type = _fetch_selected_dataset_name(ctx)
 
         self.target_data_selector(ctx, inputs)
 
@@ -235,11 +235,26 @@ class RequestAnnotations(foo.Operator):
                 label="Classes",
                 description="The annotation labels",
             )
+            dataset_type = ctx.params.get("dataset_type", "")
         else:
             dset = types.Notice(
                 label=f"Appending data to segments.ai dataset: {dataset_name}"
             )
             inputs.view("dataset_name", dset)
+
+        if dataset_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE.value:
+            inputs.bool(
+                "add_image_sensors",
+                label="Add cameras as seperate sensors",
+                description="This will add cameras as annotation tasks in the multisensor interface",
+                views=types.CheckboxView(),
+            )
+
+            if ctx.params.get("add_image_sensors", False):
+                warning = types.Warning(
+                    label="Adding image sensors is not yet supported. This option will be ignored."
+                )
+                inputs.view("warning_image_sensors", warning)
 
         return types.Property(inputs)
 
@@ -265,7 +280,7 @@ class FetchAnnotations(foo.Operator):
 
     def resolve_input(self, ctx):
         inputs = types.Object()
-        dataset_name = _fetch_selected_dataset_name(ctx)
+        dataset_name, _ = _fetch_selected_dataset_name(ctx)
         if dataset_name is None:
             return _no_dset_selected_warning(inputs)
 
@@ -363,7 +378,7 @@ class AddIssue(foo.Operator):
                 inputs, view=types.View(label="Add issue to segments.ai")
             )
 
-        dataset_full_name = _fetch_selected_dataset_name(ctx)
+        dataset_full_name, _ = _fetch_selected_dataset_name(ctx)
         if dataset_full_name is None:
             return _no_dset_selected_warning(inputs)
 
@@ -436,8 +451,10 @@ class SelectDataset(foo.Operator):
             # Run config already exists, no operation necessary
             pass
 
+        client = get_client(ctx)
         results = ctx.dataset.init_run_results(SEGMENTS_METADATA_KEY)
         results.dataset_full_name = ctx.params["dataset"]
+        results.dataset_type = str(client.get_dataset(ctx.params["dataset"]).task_type)
 
         ctx.dataset.save_run_results(SEGMENTS_METADATA_KEY, results, overwrite=True)
 
@@ -709,9 +726,16 @@ def upload_dataset(
         segments_sample = client.add_sample(
             dataset_id, sample_name, attributes=sample_attrib
         )
-        # TODO: record segments info somewhere
-        # s["segments_uuid"] = segments_sample.uuid
-        # s.save()
+        if task_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE: 
+            # For each of the samples, record uuid, frame index and sensor name
+            for groupname in s.group_slices:
+                s.group_slice = groupname
+                s.set_values("segments_uuid", [segments_sample.uuid]*len(s))
+                s.set_values("segments_frame_idx", range(len(s)))
+                s.set_values("segments_sensor_name", [groupname]*len(s))
+        else:
+            s["segments_uuid"] = segments_sample.uuid
+            s.save()
 
 
 AssetInfo = namedtuple("AssetInfo", "url filename")
@@ -812,18 +836,16 @@ def _generate_attrib_frames_lidar(
         for sensor_name, sensor_sample in sensors.items():
             if sensor_sample.media_type != "image":
                 continue
-        
+
             image_info = {
                 "name": sensor_name,
                 "url": asset_info[sensor_name].url,
             }
             if sensor_sample.metadata is not None:
                 # TODO: add extrinsics
-                intrinsics = np.array(sensor_sample.metadata.K).reshape(3,3)
+                intrinsics = np.array(sensor_sample.metadata.K).reshape(3, 3)
 
-                image_info["intrinsics"] = {
-                    "intrinsic_matrix": intrinsics.tolist()
-                }
+                image_info["intrinsics"] = {"intrinsic_matrix": intrinsics.tolist()}
 
             images.append(image_info)
 
@@ -857,12 +879,14 @@ def _no_dset_selected_warning(inputs):
     return types.Property(inputs, view=types.View(label="No dataset selected"))
 
 
-def _fetch_selected_dataset_name(ctx) -> Optional[str]:
+def _fetch_selected_dataset_name(ctx) -> Optional[Tuple[str, str]]:
     try:
         run_result = ctx.dataset.load_run_results(SEGMENTS_METADATA_KEY, cache=False)
-        return run_result.dataset_full_name
+        name = run_result.dataset_full_name
+        type_ = run_result.dataset_type
+        return (name, type_)
     except ValueError:
-        return None
+        return None, None
 
 
 def create_51_cuboid(instance: dict, category_name: str):
