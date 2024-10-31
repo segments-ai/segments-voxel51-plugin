@@ -45,6 +45,7 @@ class SegmentsDatasetType(enum.Enum):
     # POINTCLOUD_VECTOR_SEQUENCE = "pointcloud-vector-sequence"
     MULTISENSOR_SEQUENCE = "multisensor-sequence"
 
+
 IMAGE_TASKS = {
     segments.typing.TaskType.SEGMENTATION_BITMAP,
     segments.typing.TaskType.SEGMENTATION_BITMAP_HIGHRES,
@@ -746,7 +747,11 @@ def upload_sample(
     return asset_infos
 
 
-def generate_sample_attribs(sample_info: Union[fo.DatasetView, fo.Sample], asset_infos: List[Dict[str, AssetInfo]], task_type: SegmentsDatasetType):
+def generate_sample_attribs(
+    sample_info: Union[fo.DatasetView, fo.Sample],
+    asset_infos: List[Dict[str, AssetInfo]],
+    task_type: SegmentsDatasetType,
+):
     if task_type in IMAGE_TASKS:
         asset_info = asset_infos[0]["sample"]
         sample_attrib = {"image": {"url": asset_info.url}}
@@ -759,20 +764,18 @@ def generate_sample_attribs(sample_info: Union[fo.DatasetView, fo.Sample], asset
         sensors = []
         sensors.append(_generate_attrib_frames_lidar(sample_info, asset_infos))
 
-        sample_attrib = {
-            "sensors": sensors
-        }
+        sample_attrib = {"sensors": sensors}
         sample_name = "tmp"
     else:
         # TODO: add support for media type '3d'
-        raise ValueError(
-            f"Dataset upload not implemented for media type: {task_type}"
-        )
+        raise ValueError(f"Dataset upload not implemented for media type: {task_type}")
 
     return sample_attrib, sample_name
 
 
-def _generate_attrib_frames_lidar(sample_info: fo.DatasetView, asset_infos: List[Dict[str, AssetInfo]]):
+def _generate_attrib_frames_lidar(
+    sample_info: fo.DatasetView, asset_infos: List[Dict[str, AssetInfo]]
+):
     sensors = next(sample_info.iter_groups())
     for sensor_name, sensor_sample in sensors.items():
         if sensor_sample.media_type == "point-cloud":
@@ -782,20 +785,14 @@ def _generate_attrib_frames_lidar(sample_info: fo.DatasetView, asset_infos: List
 
     pc_name = sensor_name
 
-    sensor_attribs = {
-        "name": pc_name,
-        "task_type": "pointcloud-cuboid-sequence"
-    }
+    sensor_attribs = {"name": pc_name, "task_type": "pointcloud-cuboid-sequence"}
     frames = []
     for sensors, asset_info in zip(sample_info.iter_groups(), asset_infos):
         lidar_sample = sensors[pc_name]
 
         frame = {}
         frame["name"] = Path(asset_info[pc_name].filename).name
-        frame["pcd"] = {
-            "url": asset_info[pc_name].url,
-            "type": "pcd"
-        }
+        frame["pcd"] = {"url": asset_info[pc_name].url, "type": "pcd"}
         frame["ego_pose"] = {
             "position": {
                 "x": lidar_sample.metadata.position["x"],
@@ -807,7 +804,7 @@ def _generate_attrib_frames_lidar(sample_info: fo.DatasetView, asset_infos: List
                 "qx": lidar_sample.metadata.heading["qx"],
                 "qy": lidar_sample.metadata.heading["qy"],
                 "qz": lidar_sample.metadata.heading["qz"],
-            }
+            },
         }
 
         frames.append(frame)
@@ -815,10 +812,6 @@ def _generate_attrib_frames_lidar(sample_info: fo.DatasetView, asset_infos: List
     sensor_attribs["attributes"] = {"frames": frames}
 
     return sensor_attribs
-
-
-
-    
 
 
 def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) -> bool:
