@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, urljoin
 
+from pyquaternion import Quaternion
+from scipy.spatial.transform import Rotation
 import fiftyone as fo
 import fiftyone.operators as foo
 import fiftyone.operators.types as types
@@ -476,6 +478,13 @@ class Point3D:
     def array(self):
         return np.array((self.x, self.y, self.z))
 
+    def transform(self, tmat: np.ndarray):
+        t_self = self.array()
+        t_homog = np.concatenate((t_self, [1]))
+        transformed = tmat @ t_homog
+
+        return Point3D(*transformed[:3])
+
 
 def pcd_filename_map(dataset: fo.Dataset) -> dict[str, fo.Sample]:
     if dataset.media_type != "3d":
@@ -643,56 +652,119 @@ def insert_cuboid_labels(
 
         sample = sample_map[annotation["uuid"]]
 
-        cuboids = []
-        polygons = []
-        polylines = []
-        keypoints = []
-        for instance in annotation["labels"]["ground-truth"]["attributes"][
-            "annotations"
-        ]:
-            category_name = id_cat_map[instance["category_id"]]
-            type_ = instance["type"]
+        _insert_sample_annotations_cuboid(
+            sample,
+            annotation["labels"]["ground-truth"]["attributes"]["annotations"],
+            id_cat_map,
+        )
 
-            if type_ == "cuboid":
-                cuboid = create_51_cuboid(instance, category_name)
-                cuboids.append(cuboid)
-            elif type_ == "polygon":
-                polygon = create_51_3dpolygon(instance, category_name, is_polygon=True)
-                polygons.append(polygon)
-            elif type_ == "polyline":
-                polyline = create_51_3dpolygon(
-                    instance, category_name, is_polygon=False
-                )
-                polylines.append(polyline)
-            elif type_ == "point":
-                pass  # Not supported by fiftyone, somehow warn the user?
-            else:
-                raise ValueError(f"Not implemented for annoation type: {type_}")
 
-        if cuboids:
-            det_sample = fo.Detections(detections=cuboids)
-            sample["ground_truth_cuboids"] = det_sample
-        if polygons:
-            pol_sample = fo.Polylines(polylines=polygons)
-            sample["ground_truth_polygons"] = pol_sample
-        if polylines:
-            pol_sample = fo.Polylines(polylines=polylines)
-            sample["ground_truth_polylines"] = pol_sample
-        if keypoints:
-            pol_sample = fo.Polylines(polylines=keypoints)
-            sample["ground_truth_points"] = pol_sample
+def _insert_sample_annotations_cuboid(
+    sample: fo.Sample,
+    annotation: dict,
+    id_cat_map: Dict[int, str],
+    egomotion: Optional[np.ndarray] = None,
+):
+    cuboids = []
+    polygons = []
+    polylines = []
+    keypoints = []
+    for instance in annotation:
+        category_name = id_cat_map[instance["category_id"]]
+        type_ = instance["type"]
 
-        sample.save()
+        if type_ == "cuboid":
+            cuboid = create_51_cuboid(instance, category_name, egomotion)
+            cuboids.append(cuboid)
+        elif type_ == "polygon":
+            polygon = create_51_3dpolygon(instance, category_name, is_polygon=True)
+            polygons.append(polygon)
+        elif type_ == "polyline":
+            polyline = create_51_3dpolygon(instance, category_name, is_polygon=False)
+            polylines.append(polyline)
+        elif type_ == "point":
+            pass  # Not supported by fiftyone, somehow warn the user?
+        else:
+            raise ValueError(f"Not implemented for annoation type: {type_}")
+
+    if cuboids:
+        det_sample = fo.Detections(detections=cuboids)
+        sample["ground_truth_cuboids"] = det_sample
+    if polygons:
+        pol_sample = fo.Polylines(polylines=polygons)
+        sample["ground_truth_polygons"] = pol_sample
+    if polylines:
+        pol_sample = fo.Polylines(polylines=polylines)
+        sample["ground_truth_polylines"] = pol_sample
+    if keypoints:
+        pol_sample = fo.Polylines(polylines=keypoints)
+        sample["ground_truth_points"] = pol_sample
+
+    sample.save()
+
+
+SequenceMapKey = namedtuple("SequenceMapKey", "uuid frame_idx sensor_name")
 
 
 def insert_multisensor_labels(
     dataloader: dict,
     dataset: fo.Dataset,
-    sample_map: dict[str, fo.Sample],
+    sample_map: dict[SequenceMapKey, fo.Sample],
 ):
+    def ego_to_transmat(ego: dict):
+        rot = Quaternion(
+            x=ego["heading"]["qx"],
+            y=ego["heading"]["qy"],
+            z=ego["heading"]["qz"],
+            w=ego["heading"]["qw"],
+        )
+        pos = np.array(
+            [
+                ego["position"]["x"],
+                ego["position"]["y"],
+                ego["position"]["z"],
+            ]
+        )
+        tmat = np.eye(4)
+        tmat[:3, :3] = rot.rotation_matrix
+        tmat[:3, 3] = pos
+
+        return tmat
+
+    def get_egomotion(sample: dict):
+        sensors = sample["attributes"]["sensors"]
+        for s_idx, sensor in enumerate(sensors):
+            if "ego_pose" in sensor["attributes"]["frames"][0]:
+                sensor_w_ego = sensor
+                break
+        else:
+            return None
+
+        ego_poses = [x["ego_pose"] for x in sensor_w_ego["attributes"]["frames"]]
+        ego_poses = [ego_to_transmat(x) for x in ego_poses]
+        return ego_poses
+
     categories = dataloader["dataset"]["task_attributes"]["categories"]
     id_cat_map = {x["id"]: x["name"] for x in categories}
-    iterable = dataloader["dataset"]["samples"]
+    segments_samples = dataloader["dataset"]["samples"]
+
+    for annotation in segments_samples:
+        if (label_dict := annotation["labels"]["ground-truth"]) is None:
+            continue
+        uuid = annotation["uuid"]
+        sensors = label_dict["attributes"]["sensors"]
+        egomotion = get_egomotion(annotation)
+
+        for sensor in sensors:
+            sensor_name = sensor["name"]
+            for f_idx, frame in enumerate(sensor["attributes"]["frames"]):
+                ann = frame["annotations"]
+                key = SequenceMapKey(uuid, f_idx, sensor_name)
+                sample = sample_map[key]
+
+                _insert_sample_annotations_cuboid(
+                    sample, ann, id_cat_map, egomotion[f_idx]
+                )
 
 
 # Caching the client object, as constructing it is relatively expensive
@@ -904,15 +976,29 @@ def _fetch_selected_dataset_name(ctx) -> Optional[Tuple[str, str]]:
         return None, None
 
 
-def create_51_cuboid(instance: dict, category_name: str):
-    position = Point3D(**instance["position"]).array().tolist()
-    dims = Point3D(**instance["dimensions"]).array().tolist()
+def create_51_cuboid(
+    instance: dict, category_name: str, egomotion: Optional[np.ndarray] = None
+):
+    position = Point3D(**instance["position"])
+    dims = Point3D(**instance["dimensions"])
+    rotation = np.array([0, 0, instance["yaw"]])
+    if egomotion is not None:
+        egomotion = np.linalg.inv(egomotion)
+        position = position.transform(egomotion)
+
+        # egomotion[:3, 3] = 0
+        rotation_orig = Rotation.from_euler("xyz", rotation)
+        rotmatrix = egomotion[:3, :3] @ rotation_orig.as_matrix()
+        rotation = Rotation.from_matrix(rotmatrix).as_euler("xyz")
+
+    position = position.array().tolist()
+    dims = dims.array().tolist()
 
     detection = fo.Detection(
         label=category_name,
         location=position,
         dimensions=dims,
-        rotation=[0, 0, instance["yaw"]],
+        rotation=rotation.tolist(),
     )
 
     return detection
