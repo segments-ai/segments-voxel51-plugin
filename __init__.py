@@ -21,7 +21,7 @@ import segments
 import segments.typing
 from segments import SegmentsClient, SegmentsDataset
 
-SEGMENTS_FRONTEND_URL = "https://segments.ai"
+SEGMENTS_FRONTEND_URL = "https://app.segments.ai"
 SEGMENTS_METADATA_KEY = "segments_metadata"
 
 
