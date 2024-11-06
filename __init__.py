@@ -973,7 +973,7 @@ def _generate_attrib_frames_lidar(
                 if sensor_sample.metadata.extrinsics_translation is not None:
                     image_info["extrinsics"] = {
                         "translation": sensor_sample.metadata.extrinsics_translation,
-                        "rotation": sensor_sample.metadata.extrinsics_rotation
+                        "rotation": sensor_sample.metadata.extrinsics_rotation,
                     }
 
             images.append(image_info)
