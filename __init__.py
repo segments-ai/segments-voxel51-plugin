@@ -5,6 +5,7 @@ Operators for integrating with segments.ai
 from collections import namedtuple
 import enum
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urlparse, urljoin
@@ -468,6 +469,9 @@ class SelectDataset(foo.Operator):
 
 ## Helper functions
 
+AssetInfo = namedtuple("AssetInfo", "url filename")
+SequenceMapKey = namedtuple("SequenceMapKey", "uuid frame_idx sensor_name")
+
 
 @dataclass
 class Point3D:
@@ -504,24 +508,27 @@ def create_uuid_sample_map(
     segments_dataset: segments.typing.Dataset,
 ) -> dict[str, fo.Sample]:
     """Creates a dictionary mapping a Segments uuid string to a fiftyone sample."""
-    map_ = create_uuid_sample_map_local(dataset)
-    reversed_maps = {value.id: key for (key, value) in map_.items()}
+    if dataset.media_type == "group":
+        map_ = create_uuid_sample_map_grouped(dataset)
+    else:
+        map_ = create_uuid_sample_map_local(dataset)
+        reversed_maps = {value.id: key for (key, value) in map_.items()}
 
-    segments_samples = None
+        segments_samples = None
+        # Extend map by matching filenames
+        for sample in dataset:
+            if sample.id in reversed_maps:
+                # Already matched
+                continue
 
-    for sample in dataset:
-        if sample.id in reversed_maps:
-            # Already matched
-            continue
+            if segments_samples is None:
+                # Lazily fetch the samples
+                segments_samples = client.get_samples(segments_dataset.full_name)
+                sample_name_to_id = {s.name: s.uuid for s in segments_samples}
 
-        if segments_samples is None:
-            # Lazily fetch the samples
-            segments_samples = client.get_samples(segments_dataset.full_name)
-            sample_name_to_id = {s.name: s.uuid for s in segments_samples}
-
-        fo_name = Path(sample.filepath).name
-        if fo_name in sample_name_to_id:
-            map_[sample_name_to_id[fo_name]] = sample
+            fo_name = Path(sample.filepath).name
+            if fo_name in sample_name_to_id:
+                map_[sample_name_to_id[fo_name]] = sample
 
     return map_
 
@@ -535,6 +542,34 @@ def create_uuid_sample_map_local(dataset: fo.Dataset) -> dict[str, fo.Sample]:
             map_[uuid] = sample
 
     return map_
+
+
+def create_uuid_sample_map_grouped(
+    dataset: fo.Dataset,
+) -> dict[SequenceMapKey, fo.Sample]:
+    sample_mapping = {}
+
+    # Iterate over all groups in the dataset
+    for group in dataset.iter_groups():
+        # Iterate over all slices in the group
+        for sample in group.values():
+            if "segments_uuid" not in sample:
+                continue
+
+            # Extract the necessary fields
+            sensor_name = sample.segments_sensor_name
+            uuid = sample.segments_uuid
+            frame_idx = sample.segments_frame_idx
+
+            # Create a unique key for the dictionary
+            key = SequenceMapKey(
+                sensor_name=sensor_name, uuid=uuid, frame_idx=frame_idx
+            )
+
+            # Map the key to the sample
+            sample_mapping[key] = sample
+
+    return sample_mapping
 
 
 def is_cloud_storage(path) -> bool:
@@ -703,9 +738,6 @@ def _insert_sample_annotations_cuboid(
     sample.save()
 
 
-SequenceMapKey = namedtuple("SequenceMapKey", "uuid frame_idx sensor_name")
-
-
 def insert_multisensor_labels(
     dataloader: dict,
     dataset: fo.Dataset,
@@ -760,6 +792,9 @@ def insert_multisensor_labels(
             for f_idx, frame in enumerate(sensor["attributes"]["frames"]):
                 ann = frame["annotations"]
                 key = SequenceMapKey(uuid, f_idx, sensor_name)
+                if key not in sample_map:
+                    continue
+
                 sample = sample_map[key]
 
                 _insert_sample_annotations_cuboid(
@@ -823,9 +858,6 @@ def upload_dataset(
         else:
             s["segments_uuid"] = segments_sample.uuid
             s.save()
-
-
-AssetInfo = namedtuple("AssetInfo", "url filename")
 
 
 def upload_sample(
@@ -930,9 +962,16 @@ def _generate_attrib_frames_lidar(
             }
             if sensor_sample.metadata is not None:
                 # TODO: add extrinsics
-                intrinsics = np.array(sensor_sample.metadata.K).reshape(3, 3)
+                # intrinsics = np.array(sensor_sample.metadata.K).reshape(3, 3)
 
-                image_info["intrinsics"] = {"intrinsic_matrix": intrinsics.tolist()}
+                intrinsics = json.loads(sensor_sample.metadata.intrinsics)
+                intrinsics = intrinsics["K"]
+                intrinsics = np.array(intrinsics).reshape(3, 3)
+                # image_info["intrinsics"] = {
+                #     "intrinsic_matrix": intrinsics.tolist()
+                # }
+                # extrinsics = json.loads(sensor_sample.metadata.extrinsics)
+                # image_info["extrinsics"] = extrinsics
 
             images.append(image_info)
 
