@@ -961,17 +961,13 @@ def _generate_attrib_frames_lidar(
                 "url": asset_info[sensor_name].url,
             }
             if sensor_sample.metadata is not None:
-                # TODO: add extrinsics
-                # intrinsics = np.array(sensor_sample.metadata.K).reshape(3, 3)
-
-                intrinsics = json.loads(sensor_sample.metadata.intrinsics)
-                intrinsics = intrinsics["K"]
-                intrinsics = np.array(intrinsics).reshape(3, 3)
-                # image_info["intrinsics"] = {
-                #     "intrinsic_matrix": intrinsics.tolist()
-                # }
-                # extrinsics = json.loads(sensor_sample.metadata.extrinsics)
-                # image_info["extrinsics"] = extrinsics
+                image_info["intrinsics"] = {
+                    "intrinsic_matrix": sensor_sample.metadata.intrinsic_matrix
+                }
+                image_info["extrinsics"] = {
+                    "translation": sensor_sample.metadata.extrinsics_translation,
+                    "rotation": sensor_sample.metadata.extrinsics_rotation
+                }
 
             images.append(image_info)
 
