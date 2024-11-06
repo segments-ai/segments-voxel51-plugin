@@ -864,7 +864,10 @@ def upload_sample(
     client: segments.SegmentsClient, s: Union[fo.Sample, fo.DatasetView]
 ) -> List[Dict[str, AssetInfo]]:
     def upload_media_sample(sample):
-        if is_cloud_storage(sample.filepath):
+        if "segments_filepath" in sample:
+            url = sample["segments_filepath"]
+            filename = url.rsplit("/", 1)[-1]
+        elif is_cloud_storage(sample.filepath):
             url = sample.filepath
             filename = url.rsplit("/", 1)[-1]
         else:
@@ -937,19 +940,20 @@ def _generate_attrib_frames_lidar(
         frame = {}
         frame["name"] = Path(asset_info[pc_name].filename).name
         frame["pcd"] = {"url": asset_info[pc_name].url, "type": "pcd"}
-        frame["ego_pose"] = {
-            "position": {
-                "x": lidar_sample.metadata.position["x"],
-                "y": lidar_sample.metadata.position["y"],
-                "z": lidar_sample.metadata.position["z"],
-            },
-            "heading": {
-                "qw": lidar_sample.metadata.heading["qw"],
-                "qx": lidar_sample.metadata.heading["qx"],
-                "qy": lidar_sample.metadata.heading["qy"],
-                "qz": lidar_sample.metadata.heading["qz"],
-            },
-        }
+        if "position" in lidar_sample.metadata:
+            frame["ego_pose"] = {
+                "position": {
+                    "x": lidar_sample.metadata.position["x"],
+                    "y": lidar_sample.metadata.position["y"],
+                    "z": lidar_sample.metadata.position["z"],
+                },
+                "heading": {
+                    "qw": lidar_sample.metadata.heading["qw"],
+                    "qx": lidar_sample.metadata.heading["qx"],
+                    "qy": lidar_sample.metadata.heading["qy"],
+                    "qz": lidar_sample.metadata.heading["qz"],
+                },
+            }
 
         images = []
         for sensor_name, sensor_sample in sensors.items():
@@ -961,13 +965,16 @@ def _generate_attrib_frames_lidar(
                 "url": asset_info[sensor_name].url,
             }
             if sensor_sample.metadata is not None:
-                image_info["intrinsics"] = {
-                    "intrinsic_matrix": sensor_sample.metadata.intrinsic_matrix
-                }
-                image_info["extrinsics"] = {
-                    "translation": sensor_sample.metadata.extrinsics_translation,
-                    "rotation": sensor_sample.metadata.extrinsics_rotation
-                }
+                if sensor_sample.metadata.intrinsic_matrix is not None:
+                    image_info["intrinsics"] = {
+                        "intrinsic_matrix": sensor_sample.metadata.intrinsic_matrix
+                    }
+
+                if sensor_sample.metadata.extrinsics_translation is not None:
+                    image_info["extrinsics"] = {
+                        "translation": sensor_sample.metadata.extrinsics_translation,
+                        "rotation": sensor_sample.metadata.extrinsics_rotation
+                    }
 
             images.append(image_info)
 
