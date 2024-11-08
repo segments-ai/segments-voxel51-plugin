@@ -261,12 +261,6 @@ class RequestAnnotations(foo.Operator):
                 views=types.CheckboxView(),
             )
 
-            if ctx.params.get("add_image_sensors", False):
-                warning = types.Warning(
-                    label="Adding image sensors is not yet supported. This option will be ignored."
-                )
-                inputs.view("warning_image_sensors", warning)
-
             if ctx.params.get("target", "") == TargetSelection.DATASET.value:
                 error_target = types.Error(
                     label=f"Can't upload the full dataset to segments for dataset type {dataset_type}. Please create a view using the dynamic grouping feature."
@@ -873,7 +867,9 @@ def upload_dataset(
         # If the sample is stored in a cloud bucket, don't upload it to segments.ai. Instead, use the URL directly.
         asset_info = upload_sample(client, s)
 
-        sample_attrib, sample_name = generate_sample_attribs(s, asset_info, task_type)
+        sample_attrib, sample_name = generate_sample_attribs(
+            s, asset_info, task_type, ctx.params.get("add_image_sensors", False)
+        )
 
         segments_sample = client.add_sample(
             dataset_id, sample_name, attributes=sample_attrib
@@ -927,6 +923,7 @@ def generate_sample_attribs(
     sample_info: Union[fo.DatasetView, fo.Sample],
     asset_infos: List[Dict[str, AssetInfo]],
     task_type: SegmentsDatasetType,
+    include_image_sensors: bool = False,
 ):
     if task_type in IMAGE_TASKS:
         asset_info = asset_infos[0]["sample"]
@@ -939,6 +936,8 @@ def generate_sample_attribs(
     elif task_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
         sensors = []
         sensors.append(_generate_attrib_frames_lidar(sample_info, asset_infos))
+        if include_image_sensors:
+            sensors.extend(_generate_attrib_frames_image(sample_info, asset_infos))
 
         sample_attrib = {"sensors": sensors}
         # TODO: Provide a way to customize the sample names
@@ -948,6 +947,31 @@ def generate_sample_attribs(
         raise ValueError(f"Dataset upload not implemented for media type: {task_type}")
 
     return sample_attrib, sample_name
+
+
+def _generate_attrib_frames_image(
+    sample_info: fo.DatasetView, asset_infos: List[Dict[str, AssetInfo]]
+):
+    image_sensors = []
+    sensors = next(sample_info.iter_groups())
+    for sensor_name, sensor_sample in sensors.items():
+        if sensor_sample.media_type != "image":
+            continue
+            # image_sensors[sensor_name] = sensor_sample
+
+        sensor_attribs = {"name": sensor_name, "task_type": "image-vector-sequence"}
+        frames = []
+        for asset_info in asset_infos:
+            frame = {}
+            frame["name"] = Path(asset_info[sensor_name].filename).name
+            frame["image"] = {"url": asset_info[sensor_name].url}
+            frames.append(frame)
+
+        sensor_attribs["attributes"] = {"frames": frames}
+
+        image_sensors.append(sensor_attribs)
+
+    return image_sensors
 
 
 def _generate_attrib_frames_lidar(
