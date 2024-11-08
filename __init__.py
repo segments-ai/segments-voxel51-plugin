@@ -272,6 +272,18 @@ class RequestAnnotations(foo.Operator):
                     label=f"Can't upload the full dataset to segments for dataset type {dataset_type}. Please create a view using the dynamic grouping feature."
                 )
                 inputs.view("warning_no_full_dataset", error_target, invalid=True)
+            else:
+                if ctx.params.get("target", ""):
+                    dataset_view = self.target_dataset_view(ctx)
+                    try:
+                        next(dataset_view.iter_dynamic_groups())
+                    except ValueError:
+                        error_no_dynamic = types.Error(
+                            label=f"No dynamic groups found. Please use the dynamic grouping feature to create sequences."
+                        )
+                        inputs.view(
+                            "warning_no_full_dataset", error_no_dynamic, invalid=True
+                        )
 
         return types.Property(inputs)
 
