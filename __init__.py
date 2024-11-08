@@ -319,17 +319,18 @@ class FetchAnnotations(foo.Operator):
         release = client.get_release(dataset_sdk.full_name, ctx.params["release"])
 
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
-        # Pointcloud-vector is incompatible with SegmentsDataset, handle it seperately
-        if dataset_type == SegmentsDatasetType.POINTCLOUD_VECTOR:
+        # Pointcloud-vector and multisensor are incompatible with SegmentsDataset, handle them seperately
+        if dataset_type in (SegmentsDatasetType.POINTCLOUD_VECTOR, SegmentsDatasetType.MULTISENSOR_SEQUENCE):
             response = requests.get(release.attributes.url)
             response.raise_for_status()
             releasefile = response.json()
-            insert_cuboid_labels(releasefile, ctx.dataset, uuid_sample_map)
-        elif dataset_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
-            response = requests.get(release.attributes.url)
-            response.raise_for_status()
-            releasefile = response.json()
-            insert_multisensor_labels(releasefile, ctx.dataset, uuid_sample_map)
+
+            if dataset_type == SegmentsDatasetType.POINTCLOUD_VECTOR:
+                insert_cuboid_labels(releasefile, ctx.dataset, uuid_sample_map)
+            elif dataset_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
+                insert_multisensor_labels(releasefile, ctx.dataset, uuid_sample_map)
+            else:
+                raise ValueError(f"Unexpected datset_type: {dataset_type}")
         else:
             dataloader = SegmentsDataset(release, preload=False)
 
