@@ -229,16 +229,24 @@ class RequestAnnotations(foo.Operator):
         )
 
         if ctx.params.get("dataset_choice", "") == DatasetUploadTarget.NEW.value:
-            inputs.str("dataset_name", label="Dataset Name")
-            self.dataset_type_selector(ctx, inputs, ctx.dataset.media_type)
+            selected_type = ctx.params.get("dataset_type", "")
+            if selected_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE.value:
+                invalid_dset_warning = types.Error(
+                    label=f"Creating a new {selected_type} dataset from the plugin is not yet supported",
+                    invalid=True,
+                )
+                inputs.view("invalid_dset_warning", invalid_dset_warning, invalid=True)
+            else:
+                inputs.str("dataset_name", label="Dataset Name")
+                self.dataset_type_selector(ctx, inputs, ctx.dataset.media_type)
 
-            inputs.list(
-                "classes",
-                types.String(),
-                label="Classes",
-                description="The annotation labels",
-            )
-            dataset_type = ctx.params.get("dataset_type", "")
+                inputs.list(
+                    "classes",
+                    types.String(),
+                    label="Classes",
+                    description="The annotation labels",
+                )
+                dataset_type = ctx.params.get("dataset_type", "")
         else:
             dset = types.Notice(
                 label=f"Appending data to segments.ai dataset: {dataset_name}"
@@ -320,7 +328,10 @@ class FetchAnnotations(foo.Operator):
 
         dataset_type = SegmentsDatasetType(dataset_sdk.task_type)
         # Pointcloud-vector and multisensor are incompatible with SegmentsDataset, handle them seperately
-        if dataset_type in (SegmentsDatasetType.POINTCLOUD_VECTOR, SegmentsDatasetType.MULTISENSOR_SEQUENCE):
+        if dataset_type in (
+            SegmentsDatasetType.POINTCLOUD_VECTOR,
+            SegmentsDatasetType.MULTISENSOR_SEQUENCE,
+        ):
             response = requests.get(release.attributes.url)
             response.raise_for_status()
             releasefile = response.json()
