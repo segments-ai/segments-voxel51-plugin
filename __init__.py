@@ -267,6 +267,12 @@ class RequestAnnotations(foo.Operator):
                 )
                 inputs.view("warning_image_sensors", warning)
 
+            if ctx.params.get("target", "") == TargetSelection.DATASET.value:
+                error_target = types.Error(
+                    label=f"Can't upload the full dataset to segments for dataset type {dataset_type}. Please create a view using the dynamic grouping feature."
+                )
+                inputs.view("warning_no_full_dataset", error_target, invalid=True)
+
         return types.Property(inputs)
 
     def resolve_output(self, ctx):
