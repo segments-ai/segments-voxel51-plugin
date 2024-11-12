@@ -1030,6 +1030,9 @@ def _generate_attrib_frames_lidar(
                         "rotation": sensor_sample.metadata.extrinsics_rotation,
                     }
 
+                if sensor_sample.metadata.camera_convention is not None:
+                    image_info["camera_convention"] = sensor_sample.metadata.camera_convention
+
             images.append(image_info)
 
         frame["images"] = images
