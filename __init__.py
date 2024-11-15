@@ -820,9 +820,9 @@ def insert_multisensor_labels(
                     continue
 
                 sample = sample_map[key]
-
+                egomotion_this_frame = None if egomotion is None else egomotion[f_idx]
                 _insert_sample_annotations_cuboid(
-                    sample, ann, id_cat_map, egomotion[f_idx]
+                    sample, ann, id_cat_map, egomotion_this_frame
                 )
 
 
