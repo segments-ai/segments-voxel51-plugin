@@ -2,16 +2,13 @@
 Operators for integrating with segments.ai
 """
 
-from collections import namedtuple
 import enum
+from collections import namedtuple
 from dataclasses import dataclass
-import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urljoin, urlparse
 
-from pyquaternion import Quaternion
-from scipy.spatial.transform import Rotation
 import fiftyone as fo
 import fiftyone.operators as foo
 import fiftyone.operators.types as types
@@ -19,6 +16,8 @@ import numpy as np
 import requests
 import segments
 import segments.typing
+from pyquaternion import Quaternion
+from scipy.spatial.transform import Rotation
 from segments import SegmentsClient, SegmentsDataset
 
 SEGMENTS_FRONTEND_URL = "https://app.segments.ai"
@@ -273,7 +272,7 @@ class RequestAnnotations(foo.Operator):
                         next(dataset_view.iter_dynamic_groups())
                     except ValueError:
                         error_no_dynamic = types.Error(
-                            label=f"No dynamic groups found. Please use the dynamic grouping feature to create sequences."
+                            label="No dynamic groups found. Please use the dynamic grouping feature to create sequences."
                         )
                         inputs.view(
                             "warning_no_full_dataset", error_no_dynamic, invalid=True
@@ -1031,7 +1030,9 @@ def _generate_attrib_frames_lidar(
                     }
 
                 if sensor_sample.metadata.camera_convention is not None:
-                    image_info["camera_convention"] = sensor_sample.metadata.camera_convention
+                    image_info["camera_convention"] = (
+                        sensor_sample.metadata.camera_convention
+                    )
 
             images.append(image_info)
 
