@@ -48,7 +48,21 @@ class SegmentsDatasetType(enum.Enum):
     MULTISENSOR_SEQUENCE = "multisensor-sequence"
 
 
-IMAGE_TASKS = {
+SINGLE_IMAGE_TASKS = {
+    SegmentsDatasetType.SEGMENTATION_BITMAP,
+    SegmentsDatasetType.SEGMENTATION_BITMAP_HIGHRES,
+    SegmentsDatasetType.BBOXES,
+    SegmentsDatasetType.VECTOR,
+    SegmentsDatasetType.KEYPOINTS,
+}
+
+SINGLE_POINTCLOUD_TASKS = {
+    SegmentsDatasetType.POINTCLOUD_CUBOID,
+    SegmentsDatasetType.POINTCLOUD_SEGMENTATION,
+    SegmentsDatasetType.POINTCLOUD_VECTOR,
+}
+
+IMAGE_TASKS_SEGMENTS = {
     segments.typing.TaskType.SEGMENTATION_BITMAP,
     segments.typing.TaskType.SEGMENTATION_BITMAP_HIGHRES,
     segments.typing.TaskType.IMAGE_SEGMENTATION_SEQUENCE,
@@ -58,7 +72,7 @@ IMAGE_TASKS = {
     segments.typing.TaskType.KEYPOINTS,
 }
 
-POINTCLOUD_TASKS = {
+POINTCLOUD_TASKS_SEGMENTS = {
     segments.typing.TaskType.POINTCLOUD_CUBOID,
     segments.typing.TaskType.POINTCLOUD_SEGMENTATION,
     segments.typing.TaskType.POINTCLOUD_VECTOR,
@@ -858,6 +872,18 @@ def upload_dataset(
     else:
         dataset_iterator = dataset
 
+    def needs_bucket_upload(sample):
+        no_alternate_filepath = "segments_filepath" not in sample
+        not_cloud_storage = not is_cloud_storage(sample.filepath)
+
+        return no_alternate_filepath and not_cloud_storage
+
+    sample = next(iter(dataset))
+    if len(dataset) > 1000 and needs_bucket_upload(sample):
+        raise ValueError(
+            "The dataset is too large to upload using this plugin (larger than 1000). Please upload the samples to a cloud bucket and provide the URLs in the 'segments_filepath' field."
+        )
+
     for idx, s in enumerate(dataset_iterator):
         ctx.set_progress(
             (idx + 1) / len(dataset), label=f"Uploading {idx+1}/(len(dataset))"
@@ -911,8 +937,8 @@ def upload_sample(
                 asset_info[key] = upload_media_sample(sample)
             asset_infos.append(asset_info)
     else:
-        url, filename = upload_media_sample(s)
-        asset_info = {"sample": (url, filename)}
+        info = upload_media_sample(s)
+        asset_info = {"sample": info}
         asset_infos = [asset_info]
 
     return asset_infos
@@ -924,11 +950,11 @@ def generate_sample_attribs(
     task_type: SegmentsDatasetType,
     include_image_sensors: bool = False,
 ):
-    if task_type in IMAGE_TASKS:
+    if task_type in SINGLE_IMAGE_TASKS:
         asset_info = asset_infos[0]["sample"]
         sample_attrib = {"image": {"url": asset_info.url}}
         sample_name = asset_info.filename
-    elif task_type in POINTCLOUD_TASKS:
+    elif task_type in SINGLE_POINTCLOUD_TASKS:
         asset_info = asset_infos[0]["sample"]
         sample_attrib = {"pcd": {"url": asset_info.url, "type": "pcd"}}
         sample_name = asset_info.filename
@@ -1047,10 +1073,10 @@ def _generate_attrib_frames_lidar(
 
 def task_type_matches(media_type: str, seg_task_type: segments.typing.TaskType) -> bool:
     if media_type == "image":
-        return seg_task_type in IMAGE_TASKS
+        return seg_task_type in IMAGE_TASKS_SEGMENTS
 
     elif media_type == "point-cloud" or media_type == "3d":
-        return seg_task_type in POINTCLOUD_TASKS
+        return seg_task_type in POINTCLOUD_TASKS_SEGMENTS
     elif media_type == "group":
         return seg_task_type in (segments.typing.TaskType.MULTISENSOR_SEQUENCE,)
     else:
