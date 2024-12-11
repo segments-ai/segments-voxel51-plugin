@@ -40,6 +40,8 @@ The following table shows the compatible [fityone mediatypes](https://docs.voxel
 
 [^1]: request_annotations operator not yet supported for 3d mediatype. Please use the pointcloud mediatype if you need this feature.
 
+When using `multisensor-sequence` datasets, this plugin expects you to use the [dynamic grouping](https://voxel51.com/blog/dynamic-groups-fiftyone-tips-and-tricks-sep-8-2023/) feature of fiftyone. This will allow you to group fiftyone samples into sequences.
+
 # Operators
 You can bring up the operators by pressing "`" and searching for their name. Below you can find the available operators.
 
@@ -52,7 +54,7 @@ This operator selects the corresponding Segments.ai dataset for the current fift
 With this operator you can, from the fiftyone app, create a new Segments.ai annotation dataset. You can either upload the whole fiftyone dataset, upload only the current view, or you can upload all of the selected samples. This operator will either upload your data to the segments.ai AWS bucket if the samples `filepath` is a local path. If it refers to a cloud storage location (`s3://` or `gs://`), it will only send that reference to Segments.ai. Alternatively you can specify the `segments_filepath` metadata field in the fiftyone sample (see [this section](#sample-metadata)).
 
 Current limitations:
- - Fiftyone datasets with grouped media, and 3D scenes are not yet supported. If you want to upload 3D pointclouds, please use [point cloud datasets](https://docs.voxel51.com/user_guide/using_datasets.html#point-cloud-datasets)
+ - Fiftyone datasets with 3D scenes are not yet supported. If you want to upload 3D pointclouds, please use [point cloud datasets](https://docs.voxel51.com/user_guide/using_datasets.html#point-cloud-datasets)
 
 
 ## Fetch annotations
