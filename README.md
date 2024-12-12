@@ -2,6 +2,7 @@
     <br>
         <img src="assets/logo_no_shadow-with_text-blue_background.png" width="400"/>
     <br>
+    🚀 <b>New: experimental support for multisensor sequences</b> 🚀
 <p>
 
 # Segments.ai Voxel51 Plugin
@@ -55,6 +56,7 @@ With this operator you can, from the fiftyone app, create a new Segments.ai anno
 
 Current limitations:
  - Fiftyone datasets with 3D scenes are not yet supported. If you want to upload 3D pointclouds, please use [point cloud datasets](https://docs.voxel51.com/user_guide/using_datasets.html#point-cloud-datasets)
+ - You can't create a  `multisensor-sequence` Segments.ai dataset using this operator. Instead, you can create a dataset using the segments.ai web interface and use the plugin to setup your annotation task. 
 
 
 ## Fetch annotations
@@ -63,7 +65,8 @@ You can fetch annotations from a Segments.ai dataset using this operator. When y
 
 
 Current limitations:
- - It's currently not possible to fetch annotations for Segments.ai sequences.
+ - It's currently not possible to fetch annotations for Segments.ai sequences (except `multisensor-sequences`).
+ - For `multisensor-sequences`: you can only fetch annotations for the pointcloud annotation task. Importing image annotations from these datasets is not yet implemented.
 
 
 ## Add issue
@@ -126,7 +129,6 @@ for sample in dataset.iter_samples(autosave=True,progress=True):
 | Field                    | Description                                                        |
 | ------------------------ | ------------------------------------------------------------------ |
 | Sample.segments_filepath | The cloud storage location where this data sample is stored. If defined, the plugin will send this URL to Segments.ai when using the `request_annotations` operator, instead of using the default `filepath` field.|
-|                          |                                                                    |
 
 ## For image samples
 
