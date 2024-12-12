@@ -879,9 +879,10 @@ def upload_dataset(
         return no_alternate_filepath and not_cloud_storage
 
     sample = next(iter(dataset))
-    if len(dataset) > 1000 and needs_bucket_upload(sample):
+    upload_limit = 100
+    if len(dataset) > upload_limit and needs_bucket_upload(sample):
         raise ValueError(
-            "The dataset is too large to upload using this plugin (larger than 1000). Please upload the samples to a cloud bucket and provide the URLs in the 'segments_filepath' field."
+            f"The dataset is too large to upload using this plugin (larger than {upload_limit}). Please upload the samples to a cloud bucket and provide the URLs in the 'segments_filepath' field."
         )
 
     for idx, s in enumerate(dataset_iterator):
