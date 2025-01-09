@@ -17,6 +17,7 @@ https://github.com/user-attachments/assets/6580e39d-8a4f-4d2f-bf4e-f434110dcd65
 
 ```bash
 fiftyone plugins download https://github.com/segments-ai/segments-voxel51-plugin
+fiftyone plugins requirements @segmentsai/segmentsai --install
 ```
 
 ## Configuration
