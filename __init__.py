@@ -368,7 +368,7 @@ class FetchAnnotations(foo.Operator):
             else:
                 raise ValueError(f"Unexpected datset_type: {dataset_type}")
         else:
-            dataloader = SegmentsDataset(release, preload=False)
+            dataloader = SegmentsDataset(release, preload=False, load_images=False)
 
             if dataset_type in (
                 SegmentsDatasetType.SEGMENTATION_BITMAP,
