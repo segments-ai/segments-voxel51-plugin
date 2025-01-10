@@ -1108,7 +1108,14 @@ def create_51_cuboid(
 ):
     position = Point3D(**instance["position"])
     dims = Point3D(**instance["dimensions"])
-    rotation = np.array([0, 0, instance["yaw"]])
+    rotation = Rotation.from_quat(
+        [
+            instance["rotation"]["qx"],
+            instance["rotation"]["qy"],
+            instance["rotation"]["qz"],
+            instance["rotation"]["qw"],
+        ]
+    ).as_euler("xyz")
     if egomotion is not None:
         egomotion = np.linalg.inv(egomotion)
         position = position.transform(egomotion)
