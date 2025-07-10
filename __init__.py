@@ -474,16 +474,15 @@ class SelectDataset(foo.Operator):
                     {"full_name": dataset.full_name, "name": dataset.name}
                 )
 
-        choices_dataset = types.Choices()
+        choices_dataset = types.AutocompleteView()
         for dataset in filtered_dataset:
             choices_dataset.add_choice(dataset["full_name"], label=dataset["full_name"])
 
-        inputs.enum(
+        inputs.str(
             "dataset",
-            choices_dataset.values(),
             view=choices_dataset,
             label="Dataset",
-            required=True,
+            required=True
         )
 
         return types.Property(inputs)
