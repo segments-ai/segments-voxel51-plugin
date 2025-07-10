@@ -184,12 +184,16 @@ class RequestAnnotations(foo.Operator):
             for idx, cls in enumerate(ctx.params["classes"]):
                 attributes["categories"].append({"id": idx + 1, "name": cls})
 
+            organization = None
+            if ctx.params.get("in_organization"):
+                organization = ctx.params["dataset_owner"]
             dataset = client.add_dataset(
                 ctx.params["dataset_name"],
                 description="Created by the segments fiftyone plugin.",
                 metadata={"created_by": "fiftyone_plugin"},
                 task_type=task_type,
                 task_attributes=attributes,
+                organization=organization
             )
         elif data_upload_target == DatasetUploadTarget.APPEND:
             dataset_name, _ = _fetch_selected_dataset_name(ctx)
@@ -251,6 +255,14 @@ class RequestAnnotations(foo.Operator):
                 inputs.view("invalid_dset_warning", invalid_dset_warning, invalid=True)
             else:
                 inputs.str("dataset_name", label="Dataset Name")
+                inputs.bool("in_organization", label="Add to organization")
+                if ctx.params.get("in_organization", ""):
+                    user = get_client(ctx).get_user()
+                    org_choices = types.Choices()
+                    for org in user.organizations:
+                        org_choices.add_choice(org.username)
+
+                    inputs.enum("dataset_owner", org_choices.values(), label="Dataset owner", required=True)
                 self.dataset_type_selector(ctx, inputs, ctx.dataset.media_type)
 
                 inputs.list(
