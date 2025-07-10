@@ -193,7 +193,7 @@ class RequestAnnotations(foo.Operator):
                 metadata={"created_by": "fiftyone_plugin"},
                 task_type=task_type,
                 task_attributes=attributes,
-                organization=organization
+                organization=organization,
             )
         elif data_upload_target == DatasetUploadTarget.APPEND:
             dataset_name, _ = _fetch_selected_dataset_name(ctx)
@@ -262,7 +262,12 @@ class RequestAnnotations(foo.Operator):
                     for org in user.organizations:
                         org_choices.add_choice(org.username)
 
-                    inputs.enum("dataset_owner", org_choices.values(), label="Dataset owner", required=True)
+                    inputs.enum(
+                        "dataset_owner",
+                        org_choices.values(),
+                        label="Dataset owner",
+                        required=True,
+                    )
                 self.dataset_type_selector(ctx, inputs, ctx.dataset.media_type)
 
                 inputs.list(
@@ -490,12 +495,7 @@ class SelectDataset(foo.Operator):
         for dataset in filtered_dataset:
             choices_dataset.add_choice(dataset["full_name"], label=dataset["full_name"])
 
-        inputs.str(
-            "dataset",
-            view=choices_dataset,
-            label="Dataset",
-            required=True
-        )
+        inputs.str("dataset", view=choices_dataset, label="Dataset", required=True)
 
         return types.Property(inputs)
 
