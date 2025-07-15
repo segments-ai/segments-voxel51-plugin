@@ -105,12 +105,6 @@ POINTCLOUD_TASKS_SEGMENTS = {
 }
 
 
-def poor_man_logging(string):
-    with open("/home/tom/Code/fiftyone-plugin/log.log", "a") as f:
-        f.write(string)
-        f.write("\n")
-
-
 class DatasetUploadTarget(enum.Enum):
     NEW = "New"
     APPEND = "Append"
@@ -421,6 +415,8 @@ class FetchAnnotations(foo.Operator):
         if dataset_type in (
             SegmentsDatasetType.POINTCLOUD_VECTOR,
             SegmentsDatasetType.MULTISENSOR_SEQUENCE,
+            SegmentsDatasetType.POINTCLOUD_VECTOR_SEQUENCE,
+            SegmentsDatasetType.POINTCLOUD_CUBOID_SEQUENCE,
         ):
             response = requests.get(release.attributes.url)
             response.raise_for_status()
@@ -428,10 +424,12 @@ class FetchAnnotations(foo.Operator):
 
             if dataset_type == SegmentsDatasetType.POINTCLOUD_VECTOR:
                 insert_cuboid_labels(releasefile, ctx.dataset, uuid_sample_map)
-            elif dataset_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
-                insert_multisensor_labels(releasefile, ctx.dataset, uuid_sample_map)
             else:
-                raise ValueError(f"Unexpected datset_type: {dataset_type}")
+                insert_multisensor_labels(
+                    releasefile, ctx.dataset, uuid_sample_map, dataset_type
+                )
+            # else:
+            #     raise ValueError(f"Unexpected datset_type: {dataset_type}")
         else:
             dataloader = SegmentsDataset(release, preload=False, load_images=False)
 
@@ -606,6 +604,12 @@ def create_uuid_sample_map(
     """Creates a dictionary mapping a Segments uuid string to a fiftyone sample."""
     if dataset.media_type == "group":
         map_ = create_uuid_sample_map_grouped(dataset)
+    elif segments_dataset.task_type in (
+        segments.typing.TaskType.POINTCLOUD_CUBOID_SEQUENCE,
+        segments.typing.TaskType.POINTCLOUD_SEGMENTATION_SEQUENCE,
+        segments.typing.TaskType.POINTCLOUD_VECTOR_SEQUENCE,
+    ):
+        map_ = create_uuid_sample_map_sequence(dataset)
     else:
         map_ = create_uuid_sample_map_local(dataset)
         reversed_maps = {value.id: key for (key, value) in map_.items()}
@@ -640,6 +644,14 @@ def create_uuid_sample_map_local(dataset: fo.Dataset) -> dict[str, fo.Sample]:
     return map_
 
 
+def create_uuid_sample_map_sequence(dataset) -> dict[SequenceMapKey, fo.Sample]:
+    sample_mapping = {}
+    for sample in dataset:
+        add_sample_to_uuid_map(sample_mapping, sample)
+
+    return sample_mapping
+
+
 def create_uuid_sample_map_grouped(
     dataset: fo.Dataset,
 ) -> dict[SequenceMapKey, fo.Sample]:
@@ -649,23 +661,25 @@ def create_uuid_sample_map_grouped(
     for group in dataset.iter_groups():
         # Iterate over all slices in the group
         for sample in group.values():
-            if "segments_uuid" not in sample:
-                continue
-
-            # Extract the necessary fields
-            sensor_name = sample.segments_sensor_name
-            uuid = sample.segments_uuid
-            frame_idx = sample.segments_frame_idx
-
-            # Create a unique key for the dictionary
-            key = SequenceMapKey(
-                sensor_name=sensor_name, uuid=uuid, frame_idx=frame_idx
-            )
-
-            # Map the key to the sample
-            sample_mapping[key] = sample
+            add_sample_to_uuid_map(sample_mapping, sample)
 
     return sample_mapping
+
+
+def add_sample_to_uuid_map(sample_mapping, sample):
+    if "segments_uuid" not in sample:
+        return
+
+    # Extract the necessary fields
+    sensor_name = sample.segments_sensor_name
+    uuid = sample.segments_uuid
+    frame_idx = sample.segments_frame_idx
+
+    # Create a unique key for the dictionary
+    key = SequenceMapKey(sensor_name=sensor_name, uuid=uuid, frame_idx=frame_idx)
+
+    # Map the key to the sample
+    sample_mapping[key] = sample
 
 
 def is_cloud_storage(path) -> bool:
@@ -838,6 +852,7 @@ def insert_multisensor_labels(
     dataloader: dict,
     dataset: fo.Dataset,
     sample_map: dict[SequenceMapKey, fo.Sample],
+    dataset_type: SegmentsDatasetType,
 ):
     def ego_to_transmat(ego: dict):
         rot = Quaternion(
@@ -859,16 +874,26 @@ def insert_multisensor_labels(
 
         return tmat
 
-    def get_egomotion(sample: dict):
-        sensors = sample["attributes"]["sensors"]
-        for s_idx, sensor in enumerate(sensors):
+    def get_egomotion_frames(sensors):
+        for sensor in sensors:
             if "ego_pose" in sensor["attributes"]["frames"][0]:
-                sensor_w_ego = sensor
-                break
-        else:
-            return None
+                return sensor["attributes"]["frames"]
 
-        ego_poses = [x["ego_pose"] for x in sensor_w_ego["attributes"]["frames"]]
+        return None
+
+    def get_egomotion(sample: dict):
+        if "sensors" in sample["attributes"]:
+            sensors = sample["attributes"]["sensors"]
+            frames = get_egomotion_frames(sensors)
+            if frames is None:
+                # No ego pose found, return None
+                return None
+        else:
+            frames = sample["attributes"]["frames"]
+            if "ego_pose" not in frames[0]:
+                return None
+
+        ego_poses = [x["ego_pose"] for x in frames]
         ego_poses = [ego_to_transmat(x) for x in ego_poses]
         return ego_poses
 
@@ -880,22 +905,49 @@ def insert_multisensor_labels(
         if (label_dict := annotation["labels"]["ground-truth"]) is None:
             continue
         uuid = annotation["uuid"]
-        sensors = label_dict["attributes"]["sensors"]
         egomotion = get_egomotion(annotation)
 
-        for sensor in sensors:
-            sensor_name = sensor["name"]
-            for f_idx, frame in enumerate(sensor["attributes"]["frames"]):
-                ann = frame["annotations"]
-                key = SequenceMapKey(uuid, f_idx, sensor_name)
-                if key not in sample_map:
-                    continue
+        if dataset_type == SegmentsDatasetType.MULTISENSOR_SEQUENCE:
+            insert_multisensor_annotations(
+                sample_map, id_cat_map, label_dict, uuid, egomotion
+            )
+        else:
+            insert_pointcloud_sequence_annotations(
+                sample_map, id_cat_map, label_dict, uuid, egomotion
+            )
 
-                sample = sample_map[key]
-                egomotion_this_frame = None if egomotion is None else egomotion[f_idx]
-                _insert_sample_annotations_cuboid(
-                    sample, ann, id_cat_map, egomotion_this_frame
-                )
+
+def insert_pointcloud_sequence_annotations(
+    sample_map, id_cat_map, label_dict, sample_uuid, egomotion
+):
+    for f_idx, frame in enumerate(label_dict["attributes"]["frames"]):
+        ann = frame["annotations"]
+        key = SequenceMapKey(sample_uuid, f_idx, "sample")
+        if key not in sample_map:
+            continue
+
+        sample = sample_map[key]
+        egomotion_this_frame = None if egomotion is None else egomotion[f_idx]
+        _insert_sample_annotations_cuboid(sample, ann, id_cat_map, egomotion_this_frame)
+
+
+def insert_multisensor_annotations(
+    sample_map, id_cat_map, label_dict, sample_uuid, egomotion
+):
+    sensors = label_dict["attributes"]["sensors"]
+    for sensor in sensors:
+        sensor_name = sensor["name"]
+        for f_idx, frame in enumerate(sensor["attributes"]["frames"]):
+            ann = frame["annotations"]
+            key = SequenceMapKey(sample_uuid, f_idx, sensor_name)
+            if key not in sample_map:
+                continue
+
+            sample = sample_map[key]
+            egomotion_this_frame = None if egomotion is None else egomotion[f_idx]
+            _insert_sample_annotations_cuboid(
+                sample, ann, id_cat_map, egomotion_this_frame
+            )
 
 
 # Caching the client object, as constructing it is relatively expensive
