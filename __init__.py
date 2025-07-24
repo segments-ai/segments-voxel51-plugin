@@ -3,13 +3,11 @@ Operators for integrating with segments.ai
 """
 
 import enum
-import os
 from collections import namedtuple
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin, urlparse
-import logging
 
 import fiftyone as fo
 import fiftyone.operators as foo
