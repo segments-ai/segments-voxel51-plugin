@@ -32,17 +32,17 @@ fiftyone app launch
 
 The following table shows the compatible [fityone mediatypes](https://docs.voxel51.com/user_guide/using_datasets.html#using-media-type) with the [Segments.ai label types](https://docs.segments.ai/reference/sample-and-label-types).
 
-| Fiftyone media type | Compatible Segments.ai datasets              |
-| --------------------| ---------------------------------------------|
-| image               | segmentation-bitmap, vector, bbox, keypoints |
-| pointcloud          | pointcloud-cuboid, pointcloud-vector         |
-| 3d[^1]              | pointcloud-cuboid, pointcloud-vector         |
-| video               | **Not supported**                            |
-| group               | multisensor-sequence                         |
+| Fiftyone media type | Compatible Segments.ai datasets                                                              |
+| --------------------| ---------------------------------------------------------------------------------------------|
+| image               | segmentation-bitmap, vector, bbox, keypoints                                                 |
+| pointcloud          | pointcloud-cuboid, pointcloud-vector, pointcloud-cuboid-sequence, pointcloud-vector-sequence |
+| 3d[^1]              | pointcloud-cuboid, pointcloud-vector                                                         |
+| video               | **Not supported**                                                                            |
+| group               | multisensor-sequence, pointcloud-vector-sequence                                             |
 
 [^1]: request_annotations operator not yet supported for 3d mediatype. Please use the pointcloud mediatype if you need this feature.
 
-When using `multisensor-sequence` datasets, this plugin expects you to use the [dynamic grouping](https://voxel51.com/blog/dynamic-groups-fiftyone-tips-and-tricks-sep-8-2023/) feature of fiftyone. This will allow you to group fiftyone samples into sequences.
+When using `*-sequence` datasets, this plugin expects you to use the [dynamic grouping](https://voxel51.com/blog/dynamic-groups-fiftyone-tips-and-tricks-sep-8-2023/) feature of fiftyone. This will allow you to group fiftyone samples into sequences.
 
 # Operators
 You can bring up the operators by pressing "`" and searching for their name. Below you can find the available operators.
