@@ -1199,7 +1199,7 @@ def upload_dataset(
         )
 
         # If the sample is stored in a cloud bucket, don't upload it to segments.ai. Instead, use the URL directly.
-        if isinstance(s, fo.Sample):
+        if isinstance(s, fo.Sample) or isinstance(s, fo.core.sample.SampleView):
             asset_info = [upload_single_sample(client, s)]
         else:
             asset_info = upload_sequence_sample(client, s)
