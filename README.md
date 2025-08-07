@@ -44,6 +44,16 @@ The following table shows the compatible [fityone mediatypes](https://docs.voxel
 
 When using `*-sequence` datasets, this plugin expects you to use the [dynamic grouping](https://voxel51.com/blog/dynamic-groups-fiftyone-tips-and-tricks-sep-8-2023/) feature of fiftyone. This will allow you to group fiftyone samples into sequences.
 
+We also support uploading FiftyOne labels to Segments for the following label types:
+
+| Fiftyone label type         | Compatible Segments.ai label type |
+| ----------------------------| ----------------------------------|
+| fo.Detection, fo.Detections | bbox, pointcloud-cuboid           |
+| fo.Polyline, fo.Polylines   | vector, pointcloud-vector         |
+
+Note: Sequence labels cannot be uploaded through the plugin yet.
+
+
 # Operators
 You can bring up the operators by pressing "`" and searching for their name. Below you can find the available operators.
 
